@@ -70,6 +70,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     return c.json({ runId: id }, 202);
   });
   const executing = new Set<string>();
+  app.get('/api/evidence/:id', async c => c.json(await store.evidence(owner(c.req.raw), c.req.param('id'))));
   app.get('/api/runs/:id', async c => c.json(await store.getRun(owner(c.req.raw), c.req.param('id'))));
   app.get('/api/runs/:id/events', async c => {
     const identity = owner(c.req.raw), id = c.req.param('id');
