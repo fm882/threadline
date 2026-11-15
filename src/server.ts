@@ -19,11 +19,14 @@ mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const db = new PGlite(join(dataDir, 'app-db'));
 const store = new Store(db);
 await store.initialize();
-const config = gatewayConfig(process.env);
+const config = () => gatewayConfig(process.env);
 const saver = SqliteSaver.fromConnString(join(dataDir, 'checkpoints.sqlite'));
-const client = gatewayClient(config.base, config.key || 'unconfigured', config.model);
-const runner = createChatRunner(store, saver, client, (run, chunk) => chunks.emit(run, chunk), tracing);
-const app = createApp({ store, owner: () => 'local-development-user', ready: gatewayReadiness(config), run: runner });
+const runner = async (owner: string, run: string) => {
+  const current = config();
+  const client = gatewayClient(current.base, current.key || 'unconfigured', current.model);
+  await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run);
+};
+const app = createApp({ store, owner: () => 'local-development-user', ready: () => gatewayReadiness(config())(), run: runner });
 const port = Number(process.env.PORT || 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port number');
 const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, info => console.log(`API listening at http://127.0.0.1:${info.port}`));

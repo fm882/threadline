@@ -16,3 +16,23 @@ it('checks gateway availability and the configured model without exposing provid
   expect(await gatewayReadiness(config, async () => { throw new Error('secret'); })()).not.toContain('secret');
   expect(await gatewayReadiness(config, async () => new Response('secret', { status: 401 }))()).toContain('credentials');
 });
+
+it('detects a local gateway key created after the application starts', async () => {
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = await mkdtemp(join(tmpdir(), 'minmi-key-'));
+  try {
+    const keyPath = join(dir, 'gateway.key');
+    const read = () => gatewayConfig({}, keyPath);
+    expect(read().error).toContain('gateway');
+    await writeFile(keyPath, 'new-local-key');
+    let authorization = '';
+    const request: typeof fetch = async (_url, init) => {
+      authorization = new Headers(init?.headers).get('Authorization') || '';
+      return Response.json({ data: [{ id: 'chat-main-v1' }] });
+    };
+    expect(await gatewayReadiness(read(), request)()).toBeNull();
+    expect(authorization).toBe('Bearer new-local-key');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
