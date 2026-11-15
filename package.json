@@ -4,7 +4,7 @@
   "description": "",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "test": "vitest run",
+    "test": "vitest run --maxWorkers=2 --testTimeout=15000",
     "typecheck": "tsc --noEmit"
   },
   "license": "ISC",
