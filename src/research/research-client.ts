@@ -2,7 +2,7 @@ import { ChatOpenAI } from '@langchain/openai';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { z } from 'zod';
 import type { Store } from '../persistence/store.js';
-import { tavilySearch } from '../search/tavily.js';
+import { tavilySearch, SearchUnavailable } from '../search/tavily.js';
 import type { ChatMessage } from './chat.js';
 
 const tool = { type: 'function' as const, function: { name: 'web_search', description: 'Search the public web for current information when needed.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' } }, required: ['query'], additionalProperties: false } } };
@@ -25,7 +25,12 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     }
     if (calls.length !== 1 || calls[0].name !== 'web_search' || !calls[0].id) throw new Error('Unsupported tool call');
     const { query } = querySchema.parse(calls[0].args);
-    const found = await search(query, signal);
+    let found;
+    try { found = await search(query, signal); }
+    catch (error) {
+      if (error instanceof SearchUnavailable) return { content: 'Web search is unavailable, so I cannot verify current information. Please try again later.', claims: [] };
+      throw error;
+    }
     const observations = await config.store.registerEvidence(config.owner, config.runId, found);
     if (!observations.length) return { content: 'No relevant sources were found. I cannot verify this claim right now.', claims: [] };
     const payload = JSON.stringify(observations.map(({ id, title, excerpt, url, observedAt }) => ({ id, title, excerpt: excerpt.slice(0, 1200), url, observedAt })));
