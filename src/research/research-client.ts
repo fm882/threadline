@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Store } from '../persistence/store.js';
 import { tavilySearch, SearchUnavailable } from '../search/tavily.js';
 import type { ChatMessage } from './chat.js';
-import { qualifyPriceClaim } from '../answers/qualification.js';
+import { isPricingQuestion, qualifyPriceClaim } from '../answers/qualification.js';
 import { freshnessNotice, requiresCurrentVerification } from './freshness.js';
 
 const tool = { type: 'function' as const, function: { name: 'web_search', description: 'Search the public web for current information when needed.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' } }, required: ['query'], additionalProperties: false } } };
@@ -48,10 +48,12 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     if ([...answer.claims.map(claim => claim.claim), answer.uncertainty].some(text => /\[source:/i.test(text))) throw new Error('Citation markup must be generated from validated evidence');
     const allowed = new Set<string>(observations.map(item => item.id));
     if (answer.claims.some(claim => claim.evidenceIds.some(id => !allowed.has(id)))) throw new Error('Unregistered citation');
-    const qualifiedClaims = answer.claims.map(claim => ({ ...claim, claim: qualifyPriceClaim(claim.claim) }));
+    const pricingQuestion = isPricingQuestion(messages[messages.length - 1]?.content || '');
+    const qualifiedClaims = answer.claims.map(claim => ({ ...claim, claim: qualifyPriceClaim(claim.claim, pricingQuestion) }));
+    const uncertainty = answer.uncertainty ? qualifyPriceClaim(answer.uncertainty) : '';
     const freshness = freshnessNotice(observations.map(item => item.observedAt), (config.now || (() => new Date()))());
     const prefix = freshness.stale ? 'These search observations may be stale; current information was not verified.' : 'Search snippets were observed at the time shown; the underlying pages may have changed.';
-    const content = `${prefix}\nAs of ${freshness.asOf}:\n\n${qualifiedClaims.map(claim => `${claim.claim} ${claim.evidenceIds.map(id => `[source:${id}]`).join(' ')}`).join('\n\n')}${answer.uncertainty ? `\n\n${answer.uncertainty}` : ''}`;
+    const content = `${prefix}\nAs of ${freshness.asOf}:\n\n${qualifiedClaims.map(claim => `${claim.claim} ${claim.evidenceIds.map(id => `[source:${id}]`).join(' ')}`).join('\n\n')}${uncertainty ? `\n\n${uncertainty}` : ''}`;
     return { content, claims: qualifiedClaims };
   };
 }
