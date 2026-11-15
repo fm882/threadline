@@ -13,7 +13,7 @@ const gateway = createServer(async (req, res) => {
   const input = JSON.parse(body);
   const tool = input.messages.find(m => m.role === 'tool');
   if (!tool) assert.match(input.messages[0].content, /explicitly requests fresh verification/i);
-  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'A recorded finding. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', kind: 'other', evidenceIds: [JSON.parse(tool.content)[0].id] }], uncertainty: 'Recorded fixture.' }) }
+  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'A recorded finding. The tier starts at 12. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', kind: 'pricing', evidenceIds: [JSON.parse(tool.content)[0].id] }], uncertainty: 'Recorded fixture.' }) }
     : { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current information"}' } }] };
   if (tool) await new Promise(resolve => setTimeout(resolve, 800));
   res.writeHead(200, { 'content-type': 'application/json' });
@@ -36,6 +36,8 @@ try {
   await page.getByText('Reviewing sources…').waitFor({ timeout: 15000 });
   assert.equal(await page.getByText('A recorded finding.', { exact: false }).count(), 0);
   await page.getByText('A recorded finding.', { exact: false }).waitFor({ timeout: 15000 });
+  const answerText = await page.locator('article.assistant .content').innerText();
+  for (const detail of ['plan', 'currency', 'billing period', 'seats', 'region', 'taxes']) assert.ok(answerText.includes(detail));
   assert.equal(await page.getByRole('button', { name: 'Source', exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Source', exact: true }).click();
   await page.getByText('Recorded source excerpt').waitFor();
