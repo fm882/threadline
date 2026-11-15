@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import { EventEmitter } from 'node:events';
 import { Conflict, NotFound, Store } from '../persistence/store.js';
@@ -13,6 +14,17 @@ const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0
 export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null; run: (owner: string, id: string) => Promise<void> }) {
   const { store, owner, ready, run } = options;
   const app = new Hono();
+  app.use('*', async (c, next) => {
+    const host = c.req.header('host');
+    if (host && !/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return c.json({ error: 'Invalid host' }, 403);
+    const origin = c.req.header('origin');
+    if (origin) {
+      const parsed = URL.parse(origin);
+      if (!parsed || parsed.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(parsed.hostname) || !['3000', '5173'].includes(parsed.port)) return c.json({ error: 'Invalid origin' }, 403);
+    }
+    await next();
+  });
+  app.use('/api/*', bodyLimit({ maxSize: 32_768, onError: c => c.json({ error: 'Request too large' }, 413) }));
   app.onError((error, c) => {
     if (error instanceof NotFound) return c.json({ error: error.message }, 404);
     if (error instanceof Conflict) return c.json({ error: error.message }, 409);
