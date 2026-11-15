@@ -80,3 +80,39 @@ it('limits repeated interrupted inference attempts while allowing a new turn', a
     expect(await store.admit('alice', conversation, 'next', 'try again')).toBeTruthy();
   } finally { saver.db.close(); await db.close(); }
 });
+
+it('does not publish a saved checkpoint after the run has been cancelled', async () => {
+  const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'question');
+    const publish = store.publish.bind(store), fail = store.fail.bind(store);
+    store.publish = async () => { throw new Error('Simulated interruption'); };
+    store.fail = async () => {};
+    await createChatRunner(store, saver, async () => 'checkpointed response')('alice', run);
+    store.publish = publish; store.fail = fail;
+    expect(await store.cancel('alice', run)).toBe('cancelled');
+    let calls = 0;
+    await createChatRunner(store, saver, async () => { calls++; return 'unexpected'; })('alice', run);
+    expect(calls).toBe(0);
+    expect((await store.getRun('alice', run)).status).toBe('cancelled');
+    expect((await store.messages('alice', conversation)).map(item => item.content)).toEqual(['question']);
+    expect((await store.events('alice', run)).map(item => item.kind)).toEqual(['accepted', 'cancelled']);
+  } finally { saver.db.close(); await db.close(); }
+});
+
+it('does not let a stale failure or answer overwrite an already completed run', async () => {
+  const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'question');
+    await store.publish('alice', run, 'canonical answer');
+    await store.fail('alice', run, 'stale failure');
+    expect(await store.publish('alice', run, 'stale answer')).toBe(false);
+    expect((await store.getRun('alice', run)).status).toBe('completed');
+    expect((await store.messages('alice', conversation)).map(item => item.content)).toEqual(['question', 'canonical answer']);
+    expect((await store.events('alice', run)).map(event => event.kind)).toEqual(['accepted', 'completed']);
+  } finally { saver.db.close(); await db.close(); }
+});
