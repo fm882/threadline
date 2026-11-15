@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 
 const live = process.env.MINMI_LIVE_BROWSER === '1';
+const cancel = process.env.MINMI_TEST_CANCEL === '1';
 const dir = await mkdtemp(join(tmpdir(), 'minmi-browser-'));
 const gateway = createServer(async (req, res) => {
   if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }] })); return; }
@@ -15,7 +16,7 @@ const gateway = createServer(async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const chunk = content => JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: { content }, finish_reason: null }] });
   res.write(`data: ${chunk('Browser ')}\n\n`);
-  setTimeout(() => res.end(`data: ${chunk('answer')}\n\ndata: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`), 300);
+  setTimeout(() => res.end(`data: ${chunk('answer')}\n\ndata: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`), cancel ? 5000 : 300);
 });
 gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
 const port = gateway.address().port;
@@ -32,6 +33,12 @@ try {
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill(live ? 'Reply exactly: Browser answer' : 'Browser question');
   await page.getByRole('button', { name: 'Send' }).click();
+  if (cancel) {
+    await page.getByRole('button', { name: 'Stop response' }).click();
+    await page.getByText('Run stopped.').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('Browser answer', { exact: true }).count(), 0);
+    console.log('Browser cancellation passed with a synthetic gateway.');
+  } else {
   await page.locator('article.assistant .content').first().waitFor({ timeout: 70000 });
   await page.waitForFunction(() => !document.querySelector('#message')?.disabled, null, { timeout: 70000 });
   assert.equal(await page.getByText(live ? 'Reply exactly: Browser answer' : 'Browser question', { exact: true }).count(), 1);
@@ -45,6 +52,7 @@ try {
   assert.equal(await page.locator('article.assistant .content').first().innerText(), answer);
   assert.equal(await page.getByText(live ? 'Reply exactly: Browser answer' : 'Browser question', { exact: true }).count(), 1);
   console.log(`Browser chat and restart passed with ${live ? 'the configured live' : 'a synthetic'} gateway.`);
+  }
 } finally {
   if (browser) await browser.close();
   await stop();
