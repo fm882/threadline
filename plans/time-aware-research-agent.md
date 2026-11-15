@@ -73,7 +73,7 @@ A user starts the local application, creates a conversation, sends ordinary chat
 
 ### Acceptance criteria
 
-- [ ] A clean local setup reaches a working browser chat through the required npm workflow after documented gateway prerequisites; missing configuration produces actionable readiness/UI errors rather than fabricated replies.
+- [x] A clean local setup reaches a working browser chat through the required npm workflow after documented gateway prerequisites; missing configuration produces actionable readiness/UI errors rather than fabricated replies.
 - [x] The actual application client completes a chat turn through the logical gateway model binding. Streaming and terminal state are observable; incompatible capabilities fail clearly.
 - [x] Original input and final response survive a clean process restart and appear in an owned, paginated conversation history.
 - [x] Identical admission retries return the same turn; changed payloads under the same key conflict. Only one final answer is published.
