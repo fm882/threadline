@@ -24,3 +24,22 @@ it('persists source observation provenance and enforces ownership and run state'
     await expect(store.registerEvidence('alice', run, observations)).rejects.toBeInstanceOf(Conflict);
   } finally { await db.close(); }
 });
+
+it('rejects invented and other-run citations atomically before publication', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const c1 = await store.createConversation('alice'), c2 = await store.createConversation('alice');
+    const run = await store.admit('alice', c1, 'one', 'question');
+    const other = await store.admit('alice', c2, 'two', 'question');
+    const observation = { url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2025-01-02T00:00:00Z', provider: 'tavily' as const, representation: 'search_snippet' as const };
+    const [own] = await store.registerEvidence('alice', run, [observation]);
+    const [foreign] = await store.registerEvidence('alice', other, [observation]);
+    await expect(store.publish('alice', run, 'answer', [{ claim: 'fact', evidenceIds: [own.id, foreign.id] }])).rejects.toBeInstanceOf(Conflict);
+    await expect(store.publish('alice', run, 'answer', [{ claim: 'fact', evidenceIds: ['invented'] }])).rejects.toBeInstanceOf(Conflict);
+    expect((await store.getRun('alice', run)).status).toBe('active');
+    expect(await store.publish('alice', run, 'answer', [{ claim: 'fact', evidenceIds: [own.id] }])).toBe(true);
+    const links = await db.query('SELECT evidence_id FROM claim_evidence');
+    expect(links.rows).toEqual([{ evidence_id: own.id }]);
+  } finally { await db.close(); }
+});

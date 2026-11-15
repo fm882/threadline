@@ -46,6 +46,13 @@ export class Store {
         url TEXT NOT NULL, title TEXT NOT NULL, excerpt TEXT NOT NULL, excerpt_hash TEXT NOT NULL,
         observed_at TIMESTAMPTZ NOT NULL, provider TEXT NOT NULL, representation TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS answer_claims (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL, claim TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS claim_evidence (
+        claim_id TEXT NOT NULL REFERENCES answer_claims(id), evidence_id TEXT NOT NULL REFERENCES evidence_observations(id),
+        PRIMARY KEY (claim_id, evidence_id)
+      );
       CREATE TABLE IF NOT EXISTS run_events (
         id SERIAL PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
         kind TEXT NOT NULL, data TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -152,12 +159,22 @@ export class Store {
     return (await this.db.query<{ id: number; kind: string; data: string }>('SELECT id, kind, data FROM run_events WHERE run_id = $1 AND id > $2 ORDER BY id LIMIT 100', [id, after])).rows;
   }
 
-  async publish(owner: string, runId: string, content: string) {
+  async publish(owner: string, runId: string, content: string, claims: { claim: string; evidenceIds: string[] }[] = []) {
     return this.db.transaction(async tx => {
       const result = await tx.query<{ turn_id: string; conversation_id: string; status: string }>('SELECT turn_id, conversation_id, status FROM runs WHERE id = $1 AND owner_id = $2', [runId, owner]);
       const run = result.rows[0];
       if (!run) throw new NotFound('Run not found');
       if (run.status !== 'active') return false;
+      for (const claim of claims) {
+        if (!claim.claim.trim() || !claim.evidenceIds.length || new Set(claim.evidenceIds).size !== claim.evidenceIds.length) throw new Conflict('Invalid answer claim');
+        for (const evidenceId of claim.evidenceIds) {
+          const evidence = await tx.query('SELECT id FROM evidence_observations WHERE id = $1 AND owner_id = $2 AND run_id = $3', [evidenceId, owner, runId]);
+          if (!evidence.rows.length) throw new Conflict('Answer cites evidence outside this run');
+        }
+        const claimId = randomUUID();
+        await tx.query('INSERT INTO answer_claims (id, run_id, owner_id, claim) VALUES ($1, $2, $3, $4)', [claimId, runId, owner, claim.claim]);
+        for (const evidenceId of claim.evidenceIds) await tx.query('INSERT INTO claim_evidence (claim_id, evidence_id) VALUES ($1, $2)', [claimId, evidenceId]);
+      }
       const seq = await tx.query<{ value: number }>('UPDATE owner_sequences SET value = value + 1 WHERE owner_id = $1 RETURNING value', [owner]);
       await tx.query("INSERT INTO messages (id, conversation_id, owner_id, turn_id, role, content, ordinal) VALUES ($1, $2, $3, $4, 'assistant', $5, $6)", [randomUUID(), run.conversation_id, owner, run.turn_id, content, seq.rows[0].value]);
       await tx.query("UPDATE runs SET status = 'completed' WHERE id = $1", [runId]);
