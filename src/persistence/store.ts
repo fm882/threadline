@@ -131,6 +131,13 @@ export class Store {
     return { current: current.rows[0], history: history.rows };
   }
 
+  async recordProgress(owner: string, runId: string, stage: 'searching' | 'reviewing') {
+    const result = await this.db.query(`INSERT INTO run_events (run_id, kind, data)
+      SELECT id, 'progress', $3 FROM runs WHERE id = $1 AND owner_id = $2 AND status = 'active' RETURNING id`,
+      [runId, owner, JSON.stringify({ stage })]);
+    return result.rows.length > 0;
+  }
+
   async registerEvidence(owner: string, runId: string, observations: SearchResult[]) {
     return this.db.transaction(async tx => {
       const run = await tx.query<{ status: string }>('SELECT status FROM runs WHERE id = $1 AND owner_id = $2', [runId, owner]);

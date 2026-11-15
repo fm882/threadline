@@ -32,6 +32,8 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     expect(requests[0].tools).toHaveLength(1);
     expect(requests[1].messages.some((m: any) => m.role === 'tool' && m.tool_call_id === 'call_1')).toBe(true);
     expect(answer.content).toContain('[source:');
+    const progress = (await store.events('alice', runId)).filter(event => event.kind === 'progress');
+    expect(progress.map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing']);
     expect(await store.publish('alice', runId, answer.content, answer.claims)).toBe(true);
     expect((await store.evidence('alice', answer.claims[0].evidenceIds[0]))).toBeTruthy();
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
