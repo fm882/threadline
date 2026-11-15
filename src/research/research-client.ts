@@ -29,7 +29,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     }
     if (calls.length !== 1 || calls[0].name !== 'web_search' || !calls[0].id) throw new Error('Unsupported tool call');
     const { query } = querySchema.parse(calls[0].args);
-    await config.store.recordProgress(config.owner, config.runId, 'searching');
+    if (!await config.store.recordProgress(config.owner, config.runId, 'searching')) throw new Error('Run is no longer active');
     const searchId = await config.store.startSearch(config.owner, config.runId, query);
     let found;
     try { found = await search(query, signal); await config.store.finishSearch(config.owner, config.runId, searchId, 'completed'); }
@@ -41,7 +41,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     signal.throwIfAborted();
     const observations = await config.store.registerEvidence(config.owner, config.runId, found, searchId);
     if (!observations.length) return { content: 'No relevant sources were found. I cannot verify this claim right now.', claims: [] };
-    await config.store.recordProgress(config.owner, config.runId, 'reviewing');
+    if (!await config.store.recordProgress(config.owner, config.runId, 'reviewing')) throw new Error('Run is no longer active');
     const payload = JSON.stringify(observations.map(({ id, title, excerpt, url, observedAt }) => ({ id, title, excerpt: excerpt.slice(0, 1200), url, observedAt })));
     if (Buffer.byteLength(payload) > 12000) throw new Error('Search results exceed context budget');
     signal.throwIfAborted();

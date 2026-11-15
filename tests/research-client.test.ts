@@ -216,3 +216,27 @@ it('rejects a research draft with an absent or invalid claim classification', as
     expect((await store.messages('alice', conversation))).toHaveLength(1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('does not schedule a model continuation after cancellation during search', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'find sources');
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume */ } calls++;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"sources"}' } }] }, finish_reason: 'tool_calls' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, search: async () => {
+      await store.cancel('alice', runId);
+      return [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }];
+    } });
+    await expect(client([{ role: 'user', content: 'find sources' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
+    expect(calls).toBe(1);
+    expect((await store.getRun('alice', runId)).status).toBe('cancelled');
+    expect((await store.messages('alice', conversation))).toHaveLength(1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
