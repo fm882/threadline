@@ -22,6 +22,8 @@ it('uses the OpenAI-compatible gateway streaming contract with the configured mo
     expect(await client([{ role: 'user', content: 'Hi' }], chunk => chunks.push(chunk), AbortSignal.timeout(5000))).toBe('Hello');
     expect(chunks.join('')).toBe('Hello');
     expect(request.model).toBe('chat-main-v1');
+    expect(request.messages[0].role).toBe('system');
+    expect(request.messages[0].content).toContain('Web search is unavailable');
     expect(request.stream).toBe(true);
     expect(request.max_tokens).toBe(1024);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }

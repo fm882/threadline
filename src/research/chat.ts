@@ -1,7 +1,7 @@
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { ChatOpenAI } from '@langchain/openai';
-import { AIMessage, HumanMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { Store } from '../persistence/store.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 
@@ -16,7 +16,7 @@ export const MAX_INPUT_CHARS = 8_000;
 export function gatewayClient(baseURL: string, apiKey: string, model: string): ChatClient {
   const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 55_000 });
   return async (messages, onChunk, signal) => {
-    const stream = await client.stream(messages.map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content)), { signal });
+    const stream = await client.stream([new SystemMessage('Web search is unavailable. For questions requiring current or externally verified information, clearly say you cannot verify it rather than presenting an unverified current claim.'), ...messages.map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content))], { signal });
     let result = '';
     for await (const chunk of stream) {
       if (typeof chunk.content !== 'string') throw new Error('Unsupported response format');
