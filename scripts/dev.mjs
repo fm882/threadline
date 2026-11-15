@@ -1,4 +1,8 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
+// Both Vite and the API must see the same configuration before they start.
+if (existsSync('.env')) process.loadEnvFile('.env');
 
 const children = [
   spawn(process.execPath, ['--import', 'tsx', '--watch', 'src/server.ts'], { stdio: 'inherit', env: process.env }),
