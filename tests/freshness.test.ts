@@ -2,7 +2,7 @@ import { it, expect } from 'vitest';
 import { freshnessNotice, requiresCurrentVerification } from '../src/research/freshness.js';
 
 it('distinguishes explicit current verification from ordinary chat', () => {
-  for (const input of ['Is it still correct?', 'What changed since then?', 'What is the latest price today?', 'Is it currently available?', 'Has any of them changed pricing or shipped something big since?', 'Has pricing changed since Monday?', 'Any new releases this week?', 'Is that still valid?']) expect(requiresCurrentVerification(input)).toBe(true);
+  for (const input of ['Is it still correct?', 'What changed since then?', 'What is the latest price today?', 'Is it currently available?', 'Has any of them changed pricing or shipped something big since?', 'Has pricing changed since Monday?', 'Any new releases this week?', 'Is that still valid?', 'How much does it cost?', 'Have they increased their fees?', 'Is this plan still the same?']) expect(requiresCurrentVerification(input)).toBe(true);
   for (const input of ['Hello', 'Explain how pricing works', 'What did I ask last week?']) expect(requiresCurrentVerification(input)).toBe(false);
 });
 
