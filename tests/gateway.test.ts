@@ -47,3 +47,16 @@ it('does not follow gateway redirects with conversation content or credentials',
     await Promise.all([new Promise<void>(resolve => gateway.close(() => resolve())), new Promise<void>(resolve => target.close(() => resolve()))]);
   }
 });
+
+it('does not call the model for explicitly current questions when search is not configured', async () => {
+  let calls = 0;
+  const server = createServer((_req, res) => { calls++; res.end(); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing listener');
+    const client = gatewayClient(`http://127.0.0.1:${address.port}/v1`, 'test', 'chat-main-v1');
+    const result = await client([{ role: 'user', content: 'Is this price still correct today?' }], () => {}, AbortSignal.timeout(5000));
+    expect(result).toContain('cannot verify current information');
+    expect(calls).toBe(0);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
