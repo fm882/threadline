@@ -5,6 +5,7 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 import { Store } from '../persistence/store.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 import { requiresCurrentVerification } from './freshness.js';
+import { z } from 'zod';
 
 export type ChatMessage = { role: string; content: string };
 export type ChatOutput = string | { content: string; claims: { claim: string; evidenceIds: string[] }[] };
@@ -55,6 +56,17 @@ async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[],
   }
 }
 
+const checkpointAnswerSchema = z.union([
+  z.string().min(1).max(32_000),
+  z.object({ content: z.string().min(1).max(50_000), claims: z.array(z.object({ claim: z.string().min(1).max(5000), evidenceIds: z.array(z.string().uuid()).min(1).max(5) })).max(10) }),
+]);
+
+export async function checkpointAnswer(checkpointer: SqliteSaver, runId: string): Promise<ChatOutput | null> {
+  const checkpoint = await checkpointer.get({ configurable: { thread_id: runId } });
+  if (!checkpoint || checkpoint.channel_values.answer === undefined) return null;
+  return checkpointAnswerSchema.parse(checkpoint.channel_values.answer);
+}
+
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<ChatOutput>() });
 
 export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000) {
@@ -63,6 +75,12 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
     if (record.status !== 'active') return;
     const trace = traceTurn(run, sink, new Date(record.created_at).getTime());
     try {
+      const saved = await checkpointAnswer(checkpointer, run);
+      if (saved !== null) {
+        signal?.throwIfAborted();
+        if (await store.publish(owner, run, typeof saved === 'string' ? saved : saved.content, typeof saved === 'string' ? [] : saved.claims)) trace.stage('publication');
+        return;
+      }
       const { current, history: prior } = await store.context(owner, run);
       const selected: ChatMessage[] = [];
       let size = Buffer.byteLength(current.content);
@@ -76,16 +94,22 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       }
       selected.push({ role: 'user', content: current.content });
       if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
+      signal?.throwIfAborted();
+      if (!await store.beginAttempt(owner, run)) {
+        await store.fail(owner, run, 'The run could not be resumed within its attempt limit. Please start a new turn.');
+        return;
+      }
       trace.stage('inference');
       const graph = new StateGraph(State)
         .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), deadlineMs, signal) }))
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
+      signal?.throwIfAborted();
       if (await store.publish(owner, run, typeof output.answer === 'string' ? output.answer : output.answer.content, typeof output.answer === 'string' ? [] : output.answer.claims)) trace.stage('publication');
     } catch {
       trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.
-      await store.fail(owner, run, 'The chat service failed or timed out. Check gateway configuration and try again.');
+      if (!signal?.aborted) await store.fail(owner, run, 'The chat service failed or timed out. Check gateway configuration and try again.');
     } finally { trace.finish(); }
   };
 }

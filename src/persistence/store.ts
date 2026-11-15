@@ -42,6 +42,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS jobs (
         run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL
       );
+      ALTER TABLE jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS search_queries (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL,
         query TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -64,6 +65,18 @@ export class Store {
         kind TEXT NOT NULL, data TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `);
+  }
+
+  async beginAttempt(owner: string, runId: string, maximum = 2) {
+    const result = await this.db.query(`UPDATE jobs SET attempts = attempts + 1
+      WHERE run_id = $1 AND status = 'pending' AND attempts < $3
+      AND EXISTS (SELECT 1 FROM runs WHERE id = $1 AND owner_id = $2 AND status = 'active') RETURNING attempts`, [runId, owner, maximum]);
+    return result.rows.length > 0;
+  }
+
+  async pendingRuns(limit = 100) {
+    return (await this.db.query<{ id: string; owner_id: string }>(`SELECT r.id, r.owner_id FROM runs r JOIN jobs j ON j.run_id = r.id
+      WHERE r.status = 'active' AND j.status = 'pending' ORDER BY r.created_at, r.id LIMIT $1`, [limit])).rows;
   }
 
   async createConversation(owner: string) {

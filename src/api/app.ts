@@ -5,14 +5,16 @@ import { z } from 'zod';
 import { EventEmitter } from 'node:events';
 import { Conflict, NotFound, Store } from '../persistence/store.js';
 import { MAX_INPUT_CHARS } from '../research/chat.js';
+import { createDispatcher, type Dispatcher, type RunWorker } from '../jobs/dispatcher.js';
 
 export const chunks = new EventEmitter();
 chunks.setMaxListeners(0);
 const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000), verifyCurrent: z.boolean().default(false) }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
-export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: (owner: string, id: string, signal: AbortSignal) => Promise<void> }) {
+export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: RunWorker; dispatcher?: Dispatcher }) {
   const { store, owner, ready, run } = options;
+  const dispatcher = options.dispatcher || createDispatcher(store, run);
   const app = new Hono();
   app.use('*', async (c, next) => {
     const host = c.req.header('host');
@@ -58,25 +60,14 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const problem = await ready();
     if (problem) return c.json({ error: problem }, 503);
     const id = await store.admit(identity, c.req.param('id'), key, parsed.data.input, parsed.data.verifyCurrent);
-    // Identical retries may call the runner again; reserve execution in this process.
-    if (!executing.has(id)) {
-      const controller = new AbortController();
-      executing.set(id, controller);
-      void Promise.resolve().then(() => run(identity, id, controller.signal))
-        .catch(async () => {
-          // Never expose worker exceptions or provider details to the client.
-          await store.fail(identity, id, 'The chat service failed or timed out. Check gateway configuration and try again.');
-        })
-        .finally(() => executing.delete(id)).catch(() => {});
-    }
+    dispatcher.dispatch(identity, id);
     return c.json({ runId: id }, 202);
   });
-  const executing = new Map<string, AbortController>();
   app.get('/api/evidence/:id', async c => c.json(await store.evidence(owner(c.req.raw), c.req.param('id'))));
   app.post('/api/runs/:id/cancel', async c => {
     const id = c.req.param('id');
     const status = await store.cancel(owner(c.req.raw), id);
-    if (status === 'cancelled') executing.get(id)?.abort();
+    if (status === 'cancelled') dispatcher.abort(id);
     return c.json({ status });
   });
   app.get('/api/runs/:id', async c => c.json(await store.getRun(owner(c.req.raw), c.req.param('id'))));

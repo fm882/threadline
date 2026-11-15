@@ -12,6 +12,8 @@ import { researchClient } from './research/research-client.js';
 import { createSearchCache } from './search/cache.js';
 import { tavilySearch } from './search/tavily.js';
 import { requiresCurrentVerification } from './research/freshness.js';
+import { createDispatcher } from './jobs/dispatcher.js';
+import { startRecovery } from './jobs/recovery.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const tracing = process.env.LANGSMITH_TRACING === 'true' && process.env.LANGSMITH_API_KEY
@@ -38,10 +40,20 @@ const runner = async (owner: string, run: string, signal: AbortSignal) => {
   }) : gatewayClient(current.base, current.key || 'unconfigured', current.model, record.verify_current);
   await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run, signal);
 };
-const app = createApp({ store, owner: () => 'local-development-user', ready: () => gatewayReadiness(config())(), run: runner });
+const ready = () => gatewayReadiness(config())();
+const dispatcher = createDispatcher(store, runner);
+const stopRecovery = startRecovery(store, saver, dispatcher, ready);
+const app = createApp({ store, owner: () => 'local-development-user', ready, run: runner, dispatcher });
 const port = Number(process.env.PORT || 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port number');
 const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, info => console.log(`API listening at http://127.0.0.1:${info.port}`));
-const shutdown = () => server.close(() => { void db.close().finally(() => process.exit(0)); });
+let shuttingDown = false;
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  server.close();
+  if ('closeAllConnections' in server) server.closeAllConnections();
+  void (async () => { await stopRecovery(); await dispatcher.shutdown(); await db.close(); saver.db.close(); })().finally(() => process.exit(0));
+};
 process.once('SIGINT', shutdown);
 process.once('SIGTERM', shutdown);
