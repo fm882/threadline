@@ -10,6 +10,7 @@ import { createDispatcher, type Dispatcher, type RunWorker } from '../jobs/dispa
 export const chunks = new EventEmitter();
 chunks.setMaxListeners(0);
 const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000), verifyCurrent: z.boolean().default(false) }).strict();
+const timezoneSchema = z.object({ timezone: z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }), initialize: z.boolean().default(false), fallback: z.boolean().default(false) }).strict().refine(value => !value.fallback || (value.initialize && value.timezone === 'UTC'));
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
 export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: RunWorker; dispatcher?: Dispatcher }) {
@@ -42,6 +43,12 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const offset = cursorSchema.safeParse(c.req.query('offset'));
     if (!offset.success) return c.json({ error: 'Invalid offset' }, 400);
     return c.json({ conversations: await store.listConversations(owner(c.req.raw), 50, offset.data) });
+  });
+  app.patch('/api/conversations/:id', async c => {
+    const parsed = timezoneSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Provide a valid IANA timezone.' }, 400);
+    const { timezone, initialize, fallback } = parsed.data;
+    return c.json(await store.setTimezone(owner(c.req.raw), c.req.param('id'), timezone, initialize ? (fallback ? 'fallback' : 'browser') : 'user', initialize));
   });
   app.get('/api/conversations/:id/active-run', async c => c.json({ runId: await store.activeRun(owner(c.req.raw), c.req.param('id')) }));
   app.get('/api/conversations/:id/messages', async c => {

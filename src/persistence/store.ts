@@ -18,6 +18,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS timezone_source TEXT NOT NULL DEFAULT 'unset';
       CREATE TABLE IF NOT EXISTS turns (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id),
         owner_id TEXT NOT NULL, idempotency_key TEXT NOT NULL, payload_hash TEXT NOT NULL,
@@ -85,8 +87,17 @@ export class Store {
     return id;
   }
 
+  async setTimezone(owner: string, conversation: string, timezone: string, source: 'browser' | 'fallback' | 'user', initialize: boolean) {
+    const result = await this.db.query<{ timezone: string; timezone_source: string }>(`UPDATE conversations SET
+      timezone = CASE WHEN $5 AND timezone_source <> 'unset' THEN timezone ELSE $3 END,
+      timezone_source = CASE WHEN $5 AND timezone_source <> 'unset' THEN timezone_source ELSE $4 END
+      WHERE id = $1 AND owner_id = $2 RETURNING timezone, timezone_source`, [conversation, owner, timezone, source, initialize]);
+    if (!result.rows.length) throw new NotFound('Conversation not found');
+    return result.rows[0];
+  }
+
   async listConversations(owner: string, limit = 50, offset = 0) {
-    return (await this.db.query('SELECT id, created_at FROM conversations WHERE owner_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3', [owner, limit, offset])).rows;
+    return (await this.db.query('SELECT id, created_at, timezone, timezone_source FROM conversations WHERE owner_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3', [owner, limit, offset])).rows;
   }
 
   async existingAdmission(owner: string, conversation: string, key: string, input: string, verifyCurrent = false) {

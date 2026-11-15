@@ -309,3 +309,19 @@ it('bounds buffered deltas while preserving the canonical final answer for a slo
     expect(text.match(/event: completed/g)).toHaveLength(1);
   } finally { await db.close(); }
 });
+
+it('initializes and edits an owned conversation timezone without overwriting user choices', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const id = await store.createConversation('alice');
+    const app = createApp({ store, owner: req => req.headers.get('x-fixture-owner') || 'alice', ready: () => null, run: async () => {} });
+    const patch = (body: object, owner = 'alice') => app.request(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-fixture-owner': owner }, body: JSON.stringify(body) });
+    expect((await patch({ timezone: 'Mars/Olympus' })).status).toBe(400);
+    expect((await patch({ timezone: 'UTC' }, 'bob')).status).toBe(404);
+    expect(await (await patch({ timezone: 'Asia/Kolkata', initialize: true })).json()).toEqual({ timezone: 'Asia/Kolkata', timezone_source: 'browser' });
+    expect(await (await patch({ timezone: 'America/New_York' })).json()).toEqual({ timezone: 'America/New_York', timezone_source: 'user' });
+    expect(await (await patch({ timezone: 'UTC', initialize: true, fallback: true })).json()).toEqual({ timezone: 'America/New_York', timezone_source: 'user' });
+    expect((await patch({ timezone: 'Europe/London', initialize: true, fallback: true })).status).toBe(400);
+  } finally { await db.close(); }
+});
