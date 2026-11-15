@@ -1,8 +1,8 @@
 # Time-Aware Research Agent — detailed architecture
 
-> **Status:** agreed architecture and implementation specification; application code, infrastructure, and benchmarks are not yet implemented. Numerical budgets below are starting hypotheses, not measured results.
+> **Status:** local-first architecture and implementation specification. Local LiteLLM configuration and bounded inference verification helpers exist; the chat application and load/quality benchmarks are not implemented. Cloud deployment, production identity, hosting selection and multi-replica operation are deferred. Numerical budgets below are starting hypotheses, not measured results.
 >
-> **Decision:** Node/TypeScript + Hono + LangGraph + LangChain + LangSmith. All chat, embedding, and reranking inference initially runs on AWS Bedrock through a separately deployed LiteLLM gateway. The application uses OpenAI-compatible chat/embedding clients; reranking has a separate gateway contract.
+> **Decision:** Node/TypeScript + Hono + LangGraph + LangChain + LangSmith. All chat, embedding, and reranking inference initially runs on AWS Bedrock through a local LiteLLM gateway (a remote gateway remains an optional future connection mode). The application uses OpenAI-compatible chat/embedding clients; reranking has a separate gateway contract.
 >
 > This is the detailed engineering document. The submission still needs a separate, one-page `DESIGN.md`, distilled from the implementation and measured results.
 
@@ -41,11 +41,11 @@ The source of assignment requirements is [problem_statement.md](problem_statemen
 ### 1.1 Hard requirements
 
 - Application implementation is JavaScript or TypeScript on Node. FastAPI is not the application backend.
-- `npm install` followed by `npm run dev` starts the application. Live inference requires documented external-service credentials.
+- The completed application must start with `npm install` followed by `npm run dev`. This remains an implementation acceptance requirement, not a claim that a chat app already exists. Live inference additionally requires a running configured gateway and documented service credentials.
 - Exactly one **model-visible tool**, `web_search`. Historical retrieval, persistence, embedding, and reranking are application operations, not extra tools exposed to the agent.
 - Every required API key is documented in `.env.example`; no credentials are committed.
 - Public repository and one-page `DESIGN.md` are submission deliverables. Publishing is a separate action from writing this document.
-- A separately operated LiteLLM service is an inference dependency; reviewers do not need Python or a local gateway installation to run the Node application against a configured remote gateway.
+- Initial infrastructure is local: run the installed LiteLLM executable using the Node helper and existing AWS CLI profile credentials. LiteLLM is a third-party inference service, not a custom Python application backend. No cloud resources are provisioned. A future reviewer may instead use a provided remote gateway, avoiding local Python/AWS setup.
 
 ### 1.2 Product behavior
 
@@ -60,7 +60,7 @@ The differentiating question is: **what did we discuss, what was supported then,
 
 ### 1.3 Invariants
 
-1. Every private read is scoped to an authenticated owner, including vector searches, snapshots, SSE streams, and citations.
+1. Every private read is scoped to an authenticated owner, including vector searches, snapshots, SSE streams, and citations. Automatic historical reads also enforce recall eligibility; exclusion cannot be bypassed through derived indexes.
 2. Originals establish what was said. Extracted claims, embeddings, summaries, and reranker scores are derived aids.
 3. Retrieved source evidence establishes observations; attaching a citation does not prove semantic support.
 4. “No relevant update found” is different from “unchanged.” Missing historical support is different from proof of an earlier error.
@@ -73,7 +73,35 @@ The differentiating question is: **what did we discuss, what was supported then,
 
 ### 1.4 Initial non-goals
 
-No autonomous watches, notifications, unrestricted browsing, arbitrary code tools, multi-region writes, custom inference server, or multi-agent research team. Large comparisons may fan out into bounded graph tasks without introducing autonomous agents.
+No cloud deployment/provisioning, production authentication rollout, managed database provisioning, autonomous watches, notifications, unrestricted browsing, arbitrary code tools, multi-region writes, custom inference server, or multi-agent research team. Large comparisons may fan out into bounded graph tasks without introducing autonomous agents.
+
+### 1.5 Confirmed grilling decisions
+
+The following policies were accepted together. Deployment inputs were explicitly deferred; the separate acceptance of question 20 preserves a test target only.
+
+| Question | Accepted policy |
+| --- | --- |
+| 1 — Significant updates | Judge significance against stated user needs: pricing, relevant capabilities, breaking changes, deprecations and material availability; explain relevance |
+| 2 — User-reported baseline | Permit explicitly attributed user-provided prices/quotes; do not promote them to externally verified public prices |
+| 3 — Corrections | Preserve original messages; append corrections and use the corrected object for subsequent references while exact historical recall returns originals |
+| 4 — Conflicting sources | Compare dates and plan/billing details; show unresolved conflicts instead of inventing a definitive change |
+| 5 — Price evidence | Require source passages containing relevant price/comparison dimensions; fetch through search if snippets are insufficient, otherwise qualify/abstain |
+| 6 — Timezone | Initialize from browser, allow editing, display interpreted dates when relevant; visibly fall back to UTC, never IP-only inference |
+| 7 — Missing year | Prefer the most recent past date consistent with context, state it, clarify material competing interpretations |
+| 8 — Freshness | Fresh search or validation for explicit current verification; only reuse within a declared short freshness policy with original observation time |
+| 9 — Large exact recall | Paginate original questions chronologically with count/continuation; summary is optional, not a substitute |
+| 10 — Deadline | Configurable 60-second starting deadline; verified partial result plus named gaps and explicit continuation as a linked new run |
+| 11 — Streaming | Progress immediately; research answer content after validation; ordinary chat can stream directly |
+| 12 — New input during work | Wait or explicitly stop-and-send; no implicit queue of references to an unseen answer |
+| 13 — Spend | Enforce call/query/token limits; small bounded live checks before setting measured dollar limits; separate indexing budget; no total experiment budget supplied yet |
+| 14 — Recall exclusion | Ordinary conversations eligible by default; explicit exclusion prevents subsequent automatic retrieval through every derived representation |
+| 15 — Retention | Keep original conversations and bounded supporting excerpts until deletion initially; operational logs have a shorter configurable retention |
+| 16 — Trace content | Full synthetic evaluation traces permitted; real-user metadata/redacted content by default for LangSmith and gateway logs |
+| 17–19 — Deployment inputs | Deferred: no hosting/auth-provider decision or cloud deployment needed for this phase; use existing local AWS configuration for tests |
+| 20 — Load target | 100 connected clients and 10 active research turns, with background indexing, is a local test workload, not provisioned capacity |
+| 21 — Release blockers | Leakage, duplicate publication, incompatible vectors, silently omitted subjects, fabricated citations and broken recovery block release; numeric quality/cost/latency gates follow baseline measurement |
+
+Cross-conversation historical recall and explicit reconstruction of missing historical evidence were accepted earlier. See [CONTEXT.md](CONTEXT.md) for the domain terminology. Local inference checks validate transport/model access only; they are not research-quality or concurrency benchmarks.
 
 ## 2. System architecture
 
@@ -108,7 +136,7 @@ flowchart TB
     GATEWAY -. Correlated provider telemetry .-> OPS
 ```
 
-The Node application is a modular monolith. Local development hosts the API, graph executor, and background job loop together. Production may run the same codebase as separate API and worker processes. LiteLLM is a separately deployed inference gateway, not an additional application backend.
+The Node application is a modular monolith. Local development hosts the API, graph executor, and background job loop together. Production may run the same codebase as separate API and worker processes. LiteLLM initially runs as a separate local process, not an additional custom application backend. Production process splits described below are future guidance, not initial implementation requirements.
 
 The application database and checkpoint database may share one production PostgreSQL server, but their tables, migrations, and responsibilities are distinct. A shared server does not make separately committed operations atomic.
 
@@ -132,8 +160,8 @@ A graph checkpoint must not become a second unbounded transcript archive. A cont
 | Validation | Zod | Validate configuration, external input, tools, gateway responses, structured outputs |
 | Workflow | LangGraph JS `StateGraph` | Checkpointing, branching, execution state and streaming [D1] |
 | Inference client | LangChain `ChatOpenAI` and `OpenAIEmbeddings` configured for LiteLLM | Reuse compatible clients; package name does not imply OpenAI hosts inference [D2] |
-| Inference gateway | LiteLLM, pinned container release | Bedrock translation, credentials, deployment routing and bounded retries [D3] |
-| Initial backend | AWS Bedrock for all model roles | Model access and regional availability verified before deployment |
+| Inference gateway | Local LiteLLM executable, pinned tested version; optional future container | Bedrock translation, credentials, deployment routing and bounded retries [D3] |
+| Initial backend | AWS Bedrock for all model roles | Model access and regional availability verified with small local inference calls |
 | Agent telemetry | LangSmith | Trace inspection, datasets and experiments [D4] |
 | Operations | OpenTelemetry + Pino structured logs | HTTP/database/gateway timing, resource metrics and correlated errors |
 | Local application data | File-backed PGlite, required extensions loaded | Simple startup with PostgreSQL-oriented schema; verify extension support in pinned version [D5] |
@@ -456,12 +484,12 @@ flowchart LR
 
 | Role | Application alias | Initial Bedrock target | Selection status |
 | --- | --- | --- | --- |
-| Main research | `chat-main-v1` | Tool-capable Claude Sonnet-class deployment | Exact regional model/inference-profile ID selected after account access and evals |
-| Fast work | `chat-fast-v1` | Smaller Claude Haiku-class or Nova deployment | Compare routing/extraction quality, latency and cost; main model can serve this role initially |
+| Main research | `chat-main-v1` | `us.amazon.nova-pro-v1:0` through LiteLLM | Local completion/tool-call/basic JSON-schema smoke checks passed; research quality still unevaluated |
+| Fast work | `chat-fast-v1` | `us.amazon.nova-micro-v1:0` through LiteLLM | Local streaming smoke check passed; routing/extraction quality still unevaluated |
 | History embedding | `history-embedding-v1` | Titan Text Embeddings V2, `amazon.titan-embed-text-v2:0`, 1024 float dimensions, normalization enabled | Concrete baseline; validate gateway translation and retrieval quality |
-| Reranking | `history-rerank-v1` | Bedrock Amazon Rerank or Cohere Rerank deployment | Select supported regional model via evaluation; do not call Cohere directly |
+| Reranking | `history-rerank-v1` | Bedrock `cohere.rerank-v3-5:0` in `us-east-1` | Basic ranking smoke check passed through gateway; no direct Cohere service call |
 
-Titan V2 supports the selected dimension/normalization options [D9]. This is an explicit baseline, not a claim that it wins multilingual or task-specific retrieval evaluations. Pin the resolved model and gateway configuration revision. Exact chat/rerank deployment IDs cannot be asserted available without checking the AWS account/region.
+Titan V2 supports the selected dimension/normalization options [D9]. This is an explicit baseline, not a claim that it wins multilingual or task-specific retrieval evaluations. Pin the resolved model and gateway configuration revision. The local routes above were invoked through the gateway in `us-east-1`; see [the verification report](docs/INFERENCE_VERIFICATION.md). Claude Sonnet 4.6 and Haiku 4.5 candidate routes failed with `INVALID_PAYMENT_INSTRUMENT` in the tested account. The Nova defaults are a verified development baseline, not a claim they are the best models for this task. No billing/subscription changes were made. Access can differ by profile, region and account. The `us.` profiles may route across their configured US regions.
 
 All production model roles, including summary/extraction/repair calls, route to Bedrock initially. Alternative providers are enabled only through an intentional gateway configuration change and capability validation.
 
@@ -507,14 +535,14 @@ Cache identity includes embedding space, role/input mode, content hash, and auth
 | Concern | Owner and policy |
 | --- | --- |
 | Provider authentication | Gateway workload IAM role; least-privilege model invocation permissions |
-| Application authentication | Scoped gateway key; never give the app the gateway admin/master key |
+| Application authentication | Local single-user loopback exception uses an auto-generated master key because no gateway DB is configured; remote/production mode must use scoped keys, not the master key |
 | Transient inference retries | LiteLLM, bounded per request; application model SDK retry disabled/minimal |
 | Overall deadline and spend | Application, with gateway request timeout no greater than remaining budget |
 | Chat fallback | Only capability-compatible deployments within configured context envelope |
 | Smaller-context fallback | Return control to application to recompile; no silent undersized route |
 | Embedding fallback | Same model/space only; never fallback to a different embedding model |
 | Search retries | Search service, outside the inference gateway |
-| Global inference quota | Gateway deployment; coordinate across replicas using its supported shared backend |
+| Global inference quota | Local gateway request limits initially; shared coordination only when future replica deployment requires it |
 | Content caches | Disabled initially for private chat; deliberate scoped policy required before enabling |
 | Token/cost accounting | Log gateway/provider usage and versioned cost estimates; reconcile with billing separately |
 
@@ -522,7 +550,7 @@ Avoid retry multiplication between LangChain, LangGraph, HTTP libraries, and Lit
 
 ### 9.6 Configuration shape
 
-Illustrative gateway configuration uses deployment-supplied route strings. It is not a credential-bearing or tested deployment file:
+The executable local config is [infra/litellm/config.yaml](infra/litellm/config.yaml), started by [the Node helper](scripts/start-gateway.mjs). It uses existing AWS profile credentials and includes authentication/timeouts. The abridged model-routing shape below omits those operational settings; use the tracked config to run the gateway:
 
 ```yaml
 model_list:
@@ -544,7 +572,7 @@ model_list:
       aws_region_name: os.environ/AWS_REGION_NAME
 ```
 
-Pin and test dimensions/normalization, retry settings, access management, request metadata, and exact route prefixes against the chosen LiteLLM release before turning this into executable configuration [D3]. Keep provider-integration settings out of user prompts.
+Basic local HTTP compatibility was checked with LiteLLM 1.103.2. Further tests must validate full SDK integration, capability metadata, access controls, failure semantics and evaluated quality [D3]. Keep provider-integration settings out of user prompts.
 
 ## 10. Temporal history and architecture C
 
@@ -613,6 +641,10 @@ It loads the current input from its admitted message, retrieves continuity, inte
 
 A completed snapshot may be reused for the same run after access checks. A failed/incomplete preparation is retryable. Explicit re-evaluation records a new preparation version; a run records exactly which version it consumed. Deletion/access revocation invalidates reuse.
 
+**Confirmed recall-scope policy:** when the current question references a prior discussion, automatically search the user's retained history across conversations as needed; an explicit request to search other conversations is not required. Prefer a clearly matching reference in the current conversation. This preference must not override an explicit date, subject, or reference pointing elsewhere. Ordinary unrelated questions do not trigger cross-conversation historical retrieval.
+
+When another conversation supplies the reference, identify that source conversation in the answer using a readable date/title and an authorized link to the original exchange. If multiple discussions remain plausible and would materially change the answer, ask for clarification rather than treating the highest retrieval score as proof. The accepted terminology is recorded in [CONTEXT.md](CONTEXT.md).
+
 ### 10.3 Time semantics
 
 | Expression or record | Policy |
@@ -625,11 +657,15 @@ A completed snapshot may be reused for the same run after access checks. A faile
 | Website publication date | Metadata, not proof of effective date |
 | Retrieval timestamp | When observed, not when the world changed |
 
+Initialize the user timezone from the browser, allow explicit edits, and visibly use UTC if it cannot be determined. Prefer the most recent past occurrence for a missing year only when consistent with context, and state that interpretation.
+
 Build local-day boundaries using the IANA zone, including daylight-saving changes; do not add 24 hours blindly. Store timestamps in UTC and retain the interpretation timezone in each run/snapshot. A user's later timezone preference change does not rewrite an existing run.
 
 ### 10.4 Recorded time and effective time
 
 Claim versions distinguish `recorded_at`/owner sequence from optional `valid_from` and `valid_to`. The valid interval expresses source-supported applicability, not a universal truth assertion. Unknown endpoints remain null. Append correction/supersession relationships rather than overwrite previous assertions. Store the time an interpretation was derived separately from the time of its original source.
+
+Corrections are appended as source-linked records, not destructive edits. Subsequent reference resolution applies the latest applicable correction visible at the run cutoff; exact recall of an original message still returns that original. Distinguish a corrected shortlist from a historical price assertion: correction does not manufacture external support.
 
 Example: on Friday the agent discovers an announcement published Thursday saying a price changed Wednesday. Friday is observation time, Thursday publication time, Wednesday supported effective time. If the announcement gives no effective date, the application must not invent Wednesday.
 
@@ -743,13 +779,13 @@ Implement the retriever as a replaceable module, not a public query language. Re
 | --- | --- | --- |
 | Explicit message/reference | Authorized original lookup | Exact if it exists and is visible |
 | Questions on a date | Owner/time SQL, role filter, stable pagination | Can be exhaustive within retained scope |
-| Vague historical reference | Recent + entity + lexical + vector candidates | Relevance search is bounded, never exhaustive proof of absence |
+| Vague historical reference | Prefer clear current-conversation references; search the user's other retained conversations as needed using recent + entity + lexical + vector candidates | Relevance search is bounded, never exhaustive proof of absence; materially competing discussions require clarification |
 | Large date range | Paginated originals with response scope | Report remaining cursor or ask for narrowing |
 
 ### 12.3 Semantic path steps
 
 1. Interpret the historical reference without inventing entities. Preserve multiple plausible windows when needed.
-2. Establish hard filters: owner, access, deletion status, committed cutoff; add discussion time only when justified.
+2. Establish hard filters: owner, access, deletion status, recall eligibility, committed cutoff; add discussion time only when justified.
 3. Fetch recent continuity and original records not yet covered by indexing.
 4. Retrieve lexical and semantic candidates, initially 30–50 per branch within latency budget.
 5. Add explicit entity/temporal matches and preserve hard references as required candidates.
@@ -900,9 +936,9 @@ The actual tool schema exposes only query intent and permitted filters. Runtime 
 
 ### 14.2 Search policy
 
-Prioritize official pricing pages, release notes, changelogs, and dated announcements. Retain source diversity when official evidence is missing or contradictory. Rank results for relevance; validate claims separately. Independent queries can fan out with bounded concurrency after the historical subjects are known.
+Prioritize official pricing pages, release notes, changelogs, and dated announcements. For “big updates,” assess materiality against the user's stated needs and explain relevance; do not repeat every release note or treat vendor marketing as significance. Retain source diversity when official evidence is missing or contradictory. Rank results for relevance; validate claims separately. Independent queries can fan out with bounded concurrency after the historical subjects are known.
 
-Freshness filters usually concern publication/indexing metadata, not proof of real-world effective dates. “Current pricing” may require a recently observed undated official page. A search snippet is not a full page read.
+Freshness filters usually concern publication/indexing metadata, not proof of real-world effective dates. “Current pricing” may require a recently observed undated official page. A search snippet is not a full page read. Price-change evidence must include the relevant price and comparison dimensions; when snippets omit them, fetch a supporting passage through the search service or qualify/abstain. Explicit current verification triggers fresh search/source validation unless the declared brief freshness policy permits reuse.
 
 Store each source observation separately. An identical URL can produce different content at different times. A cache hit preserves the original `observedAt`. Do not manufacture freshness by recording cache-access time as observation time.
 
@@ -924,6 +960,10 @@ Treat all retrieved text as untrusted data. Prompt boundaries, restricted tools,
 
 A previous answer can be wrong without the external world changing. A historical source can be missing without proving the answer was wrong. Preserve these distinctions in data and wording.
 
+**Confirmed reconstruction policy:** the research stage may reconstruct a missing historical baseline using evidence discovered today, provided that evidence explicitly supports the relevant earlier period. Label the result as reconstructed from evidence found now; preserve the original answer and its missing citation. An undated current pricing page alone cannot establish a past price, and a publication date alone does not prove when a quoted price applied.
+
+Record newly discovered historical support as a new evidence observation with its actual observation time and supported historical period. Attach it to the current run's comparison, not retroactively to the original answer or the completed historical snapshot. The historical snapshot still describes what was recorded before its cutoff; the current research can add evidence about earlier events. Mixed baselines distinguish support available then from support recovered now.
+
 ### 15.2 Draft contract
 
 ```ts
@@ -931,6 +971,8 @@ type Comparison = {
   subject: string;
   attribute: string;
   baselineAssertionIds: Id[];
+  baselineOrigin: "stored_evidence" | "reconstructed" | "user_reported" | "mixed" | "unsupported";
+  baselinePeriod?: { start?: Instant; endExclusive?: Instant };
   historicalEvidenceIds: Id[];
   currentEvidenceIds: Id[];
   outcome: "changed" | "unchanged" | "prior_answer_incorrect" | "insufficient_evidence";
@@ -964,11 +1006,16 @@ The research model evaluates semantic support against excerpts. Use source-linke
 | Condition | Publication behavior |
 | --- | --- |
 | Current price known; historical support absent | State current price and inability to establish change |
+| User supplies an unverified quote | Compare explicitly with the user-reported quote; do not call it a verified public price |
+| Official sources conflict after date/plan normalization | Show the conflict and qualify or withhold the definitive change claim |
+| Newly found evidence explicitly establishes the historical state | Use it with reconstructed-baseline attribution; retain the original answer's provenance |
 | Same comparable observed price | Say “the checked price matches,” not “nothing changed anywhere” |
 | Source contradicts earlier statement for that same historical period | Explicitly correct prior answer |
 | Different currency/plan/billing basis | Explain non-comparability; do not report a price change |
 | Search unavailable | Preserve recall, say current verification failed |
 | Some products unverified | Name them and publish explicit partial coverage |
+
+At the research deadline, publish verified findings with named gaps. Offer explicit continuation as a linked new run with its own fixed time and budget; never silently reset the old run's deadline. The continuation reuses only authorized evidence and refreshes time-sensitive sources.
 
 Persist validated structured output and its rendered text in one finalization transaction. Stream answer presentation from this committed result. This avoids publishing claims that validation later retracts. Plain non-research chat can stream directly, but its final text must still be persisted and interruption semantics documented.
 
@@ -1010,7 +1057,7 @@ This diagram emphasizes relationships, not every physical column or framework ta
 | --- | --- | --- |
 | `users` | `id`, identity subject, timezone, `authorization_epoch`, deleted status | Authenticated owner and access invalidation |
 | `user_clocks` | `user_id` PK/FK, `committed_sequence` bigint | Transactional owner-wide history order |
-| `conversations` | `id`, `user_id`, title, timestamps, deletion status | Conversation ownership |
+| `conversations` | `id`, `user_id`, title, timestamps, deletion status, `recall_enabled`, recall-policy epoch | Conversation ownership |
 | `messages` | `id`, owner/conversation, role, original content, recorded time, owner sequence, content hash | Original history; unique `(user_id, owner_sequence)` |
 | `turns` | `id`, owner/conversation, user message, idempotency key/hash | Unique `(user_id, idempotency_key)` within documented retention window |
 | `runs` | `id`, turn, status, fixed now/timezone, cutoff, budgets, active ownership, cancellation flag, result message ID | Logical run and publication guard |
@@ -1018,7 +1065,7 @@ This diagram emphasizes relationships, not every physical column or framework ta
 | `run_events` | run, monotonic sequence, type, versioned payload, timestamp | Reconnectable durable status/final events |
 | `history_snapshots` | id, run, preparation version, cutoff, auth epoch, outcome, interpretation, coverage, config hash | Selected historical context |
 | `snapshot_sources` | snapshot, message ID, source span/hash, required/optional | Provenance and exact source selection |
-| `claim_versions` | id, source span, speaker, entity, attribute, normalized value/dimensions, recorded/derived time, valid interval, supersedes ID | Interpreted historical assertions |
+| `claim_versions` | id, source span, speaker, entity, attribute, normalized value/dimensions, recorded/derived time, valid interval, supersedes ID, correction source | Interpreted historical assertions |
 | `claim_evidence` | claim ID, evidence ID, relation/assessment | Explicit claim-to-source association |
 | `search_queries` | id, run, operation key, normalized query/filter hash, provider, timestamps, status | Search execution identity |
 | `evidence_observations` | id, owner/run/query, URL, representation, text/hash, observed/published/effective times, source operation key | Immutable source observations under retention policy |
@@ -1117,17 +1164,18 @@ Use in-process caches and single-flight initially. They are not globally coordin
 | Final output reservation | Initially 4k tokens, capability-dependent |
 | Required-evidence recompaction retry | 1 |
 
-Exact cost cap is a deployment decision after current provider pricing is configured; do not invent a dollar guarantee. Background indexing has a separate capped budget and cannot consume all foreground capacity.
+Exact per-turn cost cap follows a small bounded local evaluation and current provider pricing; no total live-experiment budget has yet been specified; do not invent a dollar guarantee. Background indexing has a separate capped budget and cannot consume all foreground capacity.
 
 First status under 100 ms is an aspirational server-side admission target under a defined load, not a network-wide guarantee. Measure first status, first answer content, and total duration separately. Avoid speculative web searches before reference resolution. Parallelize independent reads and search queries, not stages with data dependencies.
 
 ### 18.3 Scale path
 
-1. One API/executor process, remote gateway, managed PostgreSQL.
-2. Separate worker process and API replicas; shared admission/provider quotas; tuned connection pools.
-3. Add vector approximate indexing/partitioning after profiling and recall evaluation.
-4. Move large evidence blobs to object storage and partition old event records if needed.
-5. Consider a separate vector service or workflow deployment platform only when measurements identify a concrete limit.
+1. Initial: one local API/executor process, loopback LiteLLM, PGlite and SQLite checkpoints.
+2. Future only: managed PostgreSQL and a hosted gateway after an explicit deployment decision.
+3. Separate worker process and API replicas; shared admission/provider quotas; tuned connection pools.
+4. Add vector approximate indexing/partitioning after profiling and recall evaluation.
+5. Move large evidence blobs to object storage and partition old event records if needed.
+6. Consider a separate vector service or workflow deployment platform only when measurements identify a concrete limit.
 
 For multi-replica gateway deployments, configure LiteLLM's required shared persistence/cache for the enabled budget, virtual-key, and rate-limit features. Do not assume per-process counters become globally accurate automatically.
 
@@ -1179,17 +1227,23 @@ Redact credentials before instrumentation. Default exports use metadata and sani
 
 ## 20. Security, privacy, and deletion
 
-- Managed identity/OIDC in production; server-side sessions or verified tokens. Development identity is explicit and forbidden in production configuration.
+- Future production only: managed identity/OIDC with server-side sessions or verified tokens. Initial local mode uses explicit development identity and retains owner-scoping in all repositories. Development identity is explicit and forbidden in production configuration.
 - Secure cookies, same-origin API/SSE, CSRF/origin protection for cookie-authenticated mutations, request-size limits and schema validation.
 - Server-created authorized scope; models cannot supply trusted owner IDs, SQL, checkpoint thread IDs or budget overrides.
 - Parameterized SQL, ownership constraints, and optional defense-in-depth PostgreSQL row-level policies. RLS configuration is tested with connection pooling; it is not a substitute for repository scoping.
-- Gateway keys are scoped to permitted aliases/budgets. Admin API isolated. AWS inference credentials stay with the gateway workload role.
+- Local loopback-only gateway uses a generated master key stored in an ignored mode-0600 file, without a gateway database. This single-user development exception must not be used remotely. Future deployed gateway keys are scoped to permitted aliases/budgets and admin access is isolated. AWS credentials remain in the existing CLI credential chain locally, or a workload role in future deployment.
 - Model aliases are allowlisted. Client input cannot select arbitrary providers or endpoints.
 - Search receives only necessary public search terms; private transcripts are not copied into web queries.
 - Retrieved text is data. Tool allowlists, bounded execution, schema validation and injection tests support the prompt boundary.
 - Escape/sanitize rendered Markdown and links; never execute raw HTML from model/source content.
 
-### 20.1 Deletion workflow
+### 20.1 Recall exclusion and retention
+
+Retain originals and bounded supporting evidence until user deletion in the initial product. Configure a shorter operational-log retention; do not silently expire original history under the guise of log retention. Full trace content is permitted for synthetic evaluation fixtures; real-user traces remain metadata/redacted by default.
+
+An explicit “exclude from future recall” control sets a conversation recall policy and bumps its epoch. Cross-conversation retrieval, chunks, vectors, summaries and new snapshots must obey it. Exclusion is not deletion: the user may still open that conversation and use its own visible context, but another conversation must not pull it in automatically. Historical snapshots remain audit records under the retention policy, yet cannot be reused as a route around the exclusion. Recheck policy during hydration/publication and invalidate affected pending context; delayed indexing must not reinstate eligibility. A future explicit override requires a separately defined user action, not an inferred model decision.
+
+### 20.2 Deletion workflow
 
 Immediately tombstone the conversation/user scope, bump authorization epoch, deny further reads, and cancel affected runs. Enqueue idempotent cleanup of originals, chunks, vectors, claims, summaries, snapshots, cached views, context manifests, graph checkpoints and relevant object-storage content. Recheck tombstones on every delayed index result and snapshot read.
 
@@ -1197,13 +1251,17 @@ Define backup retention and restore-time deletion replay. External trace deletio
 
 ## 21. Deployment and configuration
 
-### 21.1 Local startup
+### 21.1 Local startup — current scope
 
-`npm install && npm run dev` starts Hono, the frontend development workflow, and the local background loop. Initialize PGlite and SQLite checkpoint files automatically in an ignored application-data directory. Use a configured remote LiteLLM URL and search key for live answers. No Docker, Python, AWS CLI, Redis or cloud database is required on the reviewer's machine.
+The completed chat application must satisfy `npm install && npm run dev`; it is not yet implemented. The immediately runnable artifacts are [the gateway config](infra/litellm/config.yaml), [local instructions](infra/litellm/README.md), [launcher](scripts/start-gateway.mjs), and [inference verifier](scripts/verify-inference.mjs).
 
-Without live-service credentials, start the UI and show a clear setup state; fixture/mock mode is explicit and must never masquerade as live research. A remote gateway must actually be provisioned for a working submission. Optional Compose infrastructure is a separate developer convenience.
+Run `node scripts/start-gateway.mjs` with an existing authorized AWS CLI profile selected in the environment or ignored `.env`. It binds LiteLLM to `127.0.0.1`, generates a local key in `.data/litellm.key`, and uses existing AWS credentials without copying them into the repository. In another terminal, `node scripts/verify-inference.mjs` performs bounded, billable checks on synthetic text. No hosting, managed database, IAM, model subscription or billing changes are made.
 
-### 21.2 Production topology
+PGlite and SQLite checkpoint initialization belong to the upcoming application implementation. Local LiteLLM itself requires its third-party executable/dependencies, already present in this environment; see the README for setup elsewhere. This is separate from the Node backend requirement. A future remote gateway can remove this local prerequisite, but provisioning one is not part of the current work.
+
+Without live-service credentials, the eventual UI should show an explicit setup state. Mock/fixture mode must never masquerade as live research. Do not claim a fully working chat application based on inference-only smoke tests.
+
+### 21.2 Future production topology — deferred
 
 ```mermaid
 flowchart TB
@@ -1228,7 +1286,7 @@ The gateway's own database/cache requirements depend on enabled LiteLLM features
 
 ### 21.3 Application environment contract
 
-Illustrative `.env.example` content to implement; values below are placeholders:
+The tracked [.env.example](.env.example) covers the runnable local gateway helpers. The fuller application settings below remain a planned contract until the chat app exists:
 
 ```dotenv
 NODE_ENV=development
@@ -1241,13 +1299,13 @@ DATABASE_MODE=pglite
 CHECKPOINT_MODE=sqlite
 # CHECKPOINT_DATABASE_URL=postgresql://...
 
-INFERENCE_BASE_URL=https://gateway.example.invalid/v1
+INFERENCE_BASE_URL=http://127.0.0.1:4000/v1
 INFERENCE_API_KEY=
 CHAT_MAIN_MODEL=chat-main-v1
 CHAT_FAST_MODEL=chat-fast-v1
 EMBEDDING_MODEL=history-embedding-v1
 EMBEDDING_SPACE_ID=titan-v2-1024-v1
-RERANK_URL=https://gateway.example.invalid/rerank
+RERANK_URL=http://127.0.0.1:4000/rerank
 RERANK_MODEL=history-rerank-v1
 MODEL_CAPABILITIES_PATH=config/model-capabilities.json
 
@@ -1262,9 +1320,9 @@ LANGSMITH_PROJECT=minmi-local
 # SESSION_SECRET=...
 ```
 
-Use separate documented gateway deployment variables for AWS region/model routes, workload identity, gateway master/admin secret, and optional gateway database/cache credentials. The application key is not the gateway master key. If routing chat/embeddings to another OpenAI-compatible host, configure endpoint/key/model bindings and validate capabilities; configure reranking separately if that host does not support it.
+Use separate documented gateway deployment variables for AWS region/model routes, workload identity, gateway master/admin secret, and optional gateway database/cache credentials. Remote/production application keys must not be gateway master keys; the explicit local single-user exception is documented above. If routing chat/embeddings to another OpenAI-compatible host, configure endpoint/key/model bindings and validate capabilities; configure reranking separately if that host does not support it.
 
-### 21.4 Release procedure
+### 21.4 Future deployment procedure — deferred
 
 1. Pin Node, package lockfile, gateway image, model/capability manifest and schema versions.
 2. Run CI and provider capability smoke tests in staging.
@@ -1284,16 +1342,16 @@ Use real local persistence for ordinary module tests and mocked external respons
 
 | Area | Required cases |
 | --- | --- |
-| Temporal interpretation | UTC/local midnight, DST, missing year, quoted historical relative dates |
-| Reference resolution | Competing shortlists, cross-conversation references, comparison interval versus discussion date |
-| Recall | Exact originals, pagination, deleted history, retained-scope no-match |
+| Temporal interpretation | Browser timezone initialization/editing, visible UTC fallback, UTC/local midnight, DST, missing year with stated interpretation, quoted historical relative dates |
+| Reference resolution | Competing shortlists, automatic cross-conversation recall on historical references, source-conversation attribution, no unrelated cross-conversation recall, explicit references overriding conversation preference, comparison interval versus discussion date |
+| Recall | Exact originals with chronological pagination/counts, appended corrections, excluded/deleted history, retained-scope no-match |
 | Indexing | Delayed embeddings, partial batches, malformed/zero vectors, duplicate jobs, deletion races |
 | Vector migration | Wrong space rejected, dual-generation cutover, dimension change, rollback |
 | Retrieval | Lexical-only fallback, rerank timeout, filtered ANN under-return, required-list completion |
-| Evidence | Missing baseline, prior mistake, annual/monthly mismatch, stale cached observations |
+| Evidence | Missing and user-reported baselines, reconstructed baseline with explicit historical support, current-only reconstruction rejected, original provenance preserved, source conflicts, significant-update relevance, prior mistake, annual/monthly mismatch, stale caches |
 | Context | Huge tool result, huge user input, valid message pairing, smaller-context fallback, no omitted subject |
 | Execution | Duplicate submission, crash windows, cancellation, lease loss, stale executor/checkpoint writes |
-| Security | Cross-user IDs in all routes/retrievers, prompt injection, unsafe URLs, hostile Markdown |
+| Security | Cross-user IDs in all routes/retrievers, recall exclusion through derived indexes/snapshots, prompt injection, unsafe URLs, hostile Markdown |
 | Streaming | Completion before subscription, reconnect, expired cursor, explicit cancel |
 
 Real PostgreSQL tests cover commit-order cutoff, concurrent admission, locks, active-run uniqueness, row ownership, pgvector filters and checkpoint recovery. PGlite is not evidence for these production concurrency properties.
@@ -1308,15 +1366,16 @@ Metrics: candidate recall@k, selected-reference accuracy, full-subject coverage,
 
 ### 22.3 Load and operational tests
 
+- Accepted initial workload: 100 connected chat clients and 10 active research turns with background indexing. Run locally against mocked inference/search first; this is a test target, not a measured capacity claim.
 - k6 against mocked inference/search measures application/SSE/database capacity.
 - Controlled real-gateway tests measure provider latency, throttling and cost separately.
 - Test slow consumers, disconnect storms, database pool saturation, worker crashes, gateway failures and indexing backlog.
 - Report concurrency, history size, provider/model, input/output lengths, cache conditions, p50/p95 and error rate with every benchmark.
 - No fabricated throughput, latency, cost, or quality table in `DESIGN.md`.
 
-### 22.4 Go-live gates
+### 22.4 Initial local acceptance and future go-live gates
 
-No cross-user leakage in boundary tests; idempotency and ownership recovery pass real-database tests; no invalid vectors accepted; required subjects never silently disappear; citations point to actual authorized observations; original-only fallback works during indexing failure; backups restore; credentials stay out of code/traces; gateway model bindings match the active embedding generation; public setup instructions work from a clean checkout.
+Initial local release blockers: no cross-user leakage in boundary tests; idempotency and single-process local recovery pass; real-PostgreSQL multi-process recovery is a future deployment gate; no invalid vectors accepted; required subjects never silently disappear; citations point to actual authorized observations; original-only fallback works during indexing failure; credentials stay out of code/traces; gateway model bindings match the active embedding generation; local setup instructions work from a clean checkout. Backup restore, production identity and hosted-service recovery are future deployment gates, not requirements to provision infrastructure now.
 
 Quantitative quality/latency/cost thresholds are chosen after baseline evaluation, then enforced as regression gates. This document does not invent results or claim unmet gates passed.
 
@@ -1356,13 +1415,13 @@ The tree indicates ownership, not a requirement to create dozens of one-function
 
 ### 23.2 Delivery slices
 
-1. **Runnable vertical slice:** Node API/UI, remote gateway chat, one search tool, original persistence, structured answer and basic trace.
+1. **Runnable vertical slice:** Node API/UI, local gateway chat, one search tool, original persistence, structured answer and basic trace.
 2. **Durable execution:** admission/idempotency, packaged checkpoints, execution job, reconnect/cancel and finalization recovery.
 3. **Historical correctness:** committed cutoff, temporal interpretation, original recall, C snapshots and evidence layers.
 4. **Hybrid retrieval:** source chunks, pinned Bedrock embeddings, lexical/vector fusion, conditional Bedrock reranking and index-lag fallback.
 5. **Context reliability:** every-call compiler, compaction, long-history fixtures, bounded decomposition and overflow handling.
-6. **Production hardening:** identity, distributed limits where needed, gateway access policy, deletion, backups and failure injection.
-7. **Evidence and submission:** measured eval/load reports, concise `DESIGN.md`, clean-checkout validation, public repository release when authorized.
+6. **Local hardening:** tenant-isolation fixtures, local gateway access, recall exclusion/deletion, crash recovery and failure injection. Production identity, distributed quotas, hosting and backup operations are deferred until deployment is requested.
+7. **Evidence and submission:** measured eval/load reports, concise `DESIGN.md`, clean-checkout validation. Public repository release and hosted deployment remain separate authorized steps.
 
 Tests/evaluations accompany each slice; they are not postponed until the end. No phase is marked complete until its behavior is demonstrated.
 
@@ -1387,7 +1446,7 @@ Tests/evaluations accompany each slice; they are not postponed until the end. No
 
 LiteLLM introduces an operational dependency and an additional network hop. Hybrid retrieval adds embedding/indexing cost and eventual consistency. Reranking adds latency and inference cost. Snapshots add privacy/deletion responsibilities. Run-level advisory locks consume dedicated database connections. Multiple persistence roles require idempotent reconciliation. These are explicit costs to measure, not reasons to omit the underlying guarantees.
 
-### 24.3 Must resolve before production
+### 24.3 Future production decisions — not initial scope
 
 - AWS account/region, main/fast/rerank deployment IDs, model access and quotas.
 - Capability manifest, exact tokenizer/counting policy, output allowance and gateway metadata capture.

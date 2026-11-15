@@ -1,0 +1,35 @@
+# Local, single-user gateway. Start with: node scripts/start-gateway.mjs
+# Credentials come from the AWS CLI profile/environment credential chain.
+# No AWS keys or machine-specific profile names belong in this file.
+model_list:
+  - model_name: chat-main-v1
+    litellm_params:
+      model: os.environ/BEDROCK_MAIN_ROUTE
+      aws_region_name: os.environ/AWS_REGION_NAME
+  - model_name: chat-fast-v1
+    litellm_params:
+      model: os.environ/BEDROCK_FAST_ROUTE
+      aws_region_name: os.environ/AWS_REGION_NAME
+  - model_name: history-embedding-v1
+    litellm_params:
+      model: os.environ/BEDROCK_EMBEDDING_ROUTE
+      aws_region_name: os.environ/AWS_REGION_NAME
+      dimensions: 1024
+  - model_name: history-rerank-v1
+    litellm_params:
+      model: os.environ/BEDROCK_RERANK_ROUTE
+      aws_region_name: os.environ/AWS_REGION_NAME
+
+general_settings:
+  # Without a gateway DB, LiteLLM authenticates using its master key.
+  # This is ONLY acceptable for this loopback-only, single-user local process.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+router_settings:
+  num_retries: 0
+  timeout: 30
+
+litellm_settings:
+  drop_params: false
+  set_verbose: false
+  request_timeout: 30
