@@ -8,7 +8,7 @@ import { SearchUnavailable } from '../src/search/tavily.js';
 it('performs a model tool-call and result continuation with run-owned evidence', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
   const conversation = await store.createConversation('alice');
-  const runId = await store.admit('alice', conversation, 'key', 'current price');
+  const runId = await store.admit('alice', conversation, 'key', 'current information');
   const requests: any[] = [];
   const server = createServer(async (req, res) => {
     let body = ''; for await (const part of req) body += part;
@@ -18,7 +18,7 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     else {
       const toolResult = request.messages.find((m: any) => m.role === 'tool');
       const evidence = JSON.parse(toolResult.content)[0];
-      message = { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Price is uncertain.', evidenceIds: [evidence.id] }], uncertainty: 'Check plan and billing terms.' }) };
+      message = { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'The entry tier starts at 12.', evidenceIds: [evidence.id] }], uncertainty: 'Check plan and billing terms.' }) };
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests.length === 1 ? 'tool_calls' : 'stop' }] }));
@@ -26,8 +26,8 @@ it('performs a model tool-call and result continuation with run-owned evidence',
   server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   try {
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
-    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, now: () => new Date('2026-01-01T01:00:00Z'), search: async () => [{ url: 'https://example.com/', title: 'Source', excerpt: 'An excerpt', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
-    const answer = await client([{ role: 'user', content: 'current price' }], () => {}, AbortSignal.timeout(5000));
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, now: () => new Date('2026-01-01T01:00:00Z'), search: async () => [{ url: 'https://example.com/', title: 'Source', excerpt: 'The entry price is $12.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    const answer = await client([{ role: 'user', content: 'current information' }], () => {}, AbortSignal.timeout(5000));
     expect(typeof answer).toBe('object');
     if (typeof answer === 'string') throw new Error('Expected research answer');
     expect(requests[0].tools).toHaveLength(1);

@@ -49,7 +49,14 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     const allowed = new Set<string>(observations.map(item => item.id));
     if (answer.claims.some(claim => claim.evidenceIds.some(id => !allowed.has(id)))) throw new Error('Unregistered citation');
     const pricingQuestion = isPricingQuestion(messages[messages.length - 1]?.content || '');
-    const qualifiedClaims = answer.claims.map(claim => ({ ...claim, claim: qualifyPriceClaim(claim.claim, pricingQuestion) }));
+    const byId = new Map(observations.map(item => [item.id as string, item]));
+    const qualifiedClaims = answer.claims.map(claim => {
+      const citedPricing = claim.evidenceIds.some(id => {
+        const source = byId.get(id);
+        return source ? isPricingQuestion(`${source.title} ${source.excerpt}`) : false;
+      });
+      return { ...claim, claim: qualifyPriceClaim(claim.claim, pricingQuestion || citedPricing) };
+    });
     const uncertainty = answer.uncertainty ? qualifyPriceClaim(answer.uncertainty) : '';
     const freshness = freshnessNotice(observations.map(item => item.observedAt), (config.now || (() => new Date()))());
     const prefix = freshness.stale ? 'These search observations may be stale; current information was not verified.' : 'Search snippets were observed at the time shown; the underlying pages may have changed.';
