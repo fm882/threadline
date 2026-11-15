@@ -36,3 +36,19 @@ it('persists atomic publication, a fixed cutoff, and owner-scoped history', asyn
     expect((await store.getRun('alice', next)).cutoff).toBe(2);
   } finally { await db.close(); }
 });
+
+it('serializes concurrent admissions and prevents duplicate publication', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const retries = await Promise.all(Array.from({ length: 5 }, () => store.admit('alice', conversation, 'same', 'hello')));
+    expect(new Set(retries).size).toBe(1);
+    const results = await Promise.all(Array.from({ length: 5 }, () => store.publish('alice', retries[0], 'answer')));
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await store.messages('alice', conversation)).map(m => m.content)).toEqual(['hello', 'answer']);
+    const attempts = await Promise.allSettled(['two', 'three'].map(key => store.admit('alice', conversation, key, key)));
+    expect(attempts.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter(result => result.status === 'rejected')).toHaveLength(1);
+  } finally { await db.close(); }
+});
