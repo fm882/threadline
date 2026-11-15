@@ -179,6 +179,8 @@ it('discloses failed search without asking the model to fabricate a researched a
     expect(result.content).not.toContain('secret');
     expect(result.claims).toEqual([]);
     expect(calls).toBe(1);
+    const queries = await db.query<{ status: string }>('SELECT status FROM search_queries WHERE run_id = $1', [runId]);
+    expect(queries.rows).toEqual([{ status: 'failed' }]);
     expect(await store.publish('alice', runId, result.content, result.claims)).toBe(true);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });

@@ -41,6 +41,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS jobs (
         run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS search_queries (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL,
+        query TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
       CREATE TABLE IF NOT EXISTS evidence_observations (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL,
         url TEXT NOT NULL, title TEXT NOT NULL, excerpt TEXT NOT NULL, excerpt_hash TEXT NOT NULL,
@@ -129,6 +133,18 @@ export class Store {
       ORDER BY m.ordinal DESC LIMIT 200
       ) recent ORDER BY ordinal`, [owner, run.conversation_id, run.cutoff]);
     return { current: current.rows[0], history: history.rows };
+  }
+
+  async startSearch(owner: string, runId: string, query: string) {
+    const id = randomUUID();
+    const result = await this.db.query(`INSERT INTO search_queries (id, run_id, owner_id, query, status)
+      SELECT $3, id, owner_id, $4, 'started' FROM runs WHERE id = $1 AND owner_id = $2 AND status = 'active' RETURNING id`, [runId, owner, id, query]);
+    if (!result.rows.length) throw new NotFound('Active run not found');
+    return id;
+  }
+
+  async finishSearch(owner: string, runId: string, id: string, status: 'completed' | 'failed') {
+    await this.db.query(`UPDATE search_queries SET status = $4 WHERE id = $1 AND owner_id = $2 AND run_id = $3 AND status = 'started'`, [id, owner, runId, status]);
   }
 
   async recordProgress(owner: string, runId: string, stage: 'searching' | 'reviewing') {

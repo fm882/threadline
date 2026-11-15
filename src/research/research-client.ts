@@ -29,9 +29,11 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     if (calls.length !== 1 || calls[0].name !== 'web_search' || !calls[0].id) throw new Error('Unsupported tool call');
     const { query } = querySchema.parse(calls[0].args);
     await config.store.recordProgress(config.owner, config.runId, 'searching');
+    const searchId = await config.store.startSearch(config.owner, config.runId, query);
     let found;
-    try { found = await search(query, signal); }
+    try { found = await search(query, signal); await config.store.finishSearch(config.owner, config.runId, searchId, 'completed'); }
     catch (error) {
+      await config.store.finishSearch(config.owner, config.runId, searchId, 'failed');
       if (error instanceof SearchUnavailable) return { content: 'Web search is unavailable, so I cannot verify current information. Please try again later.', claims: [] };
       throw error;
     }
