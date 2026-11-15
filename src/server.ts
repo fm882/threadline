@@ -12,7 +12,7 @@ if (existsSync('.env')) process.loadEnvFile('.env');
 const tracing = process.env.LANGSMITH_TRACING === 'true' && process.env.LANGSMITH_API_KEY
   ? langsmithSink(process.env.LANGSMITH_API_KEY, process.env.LANGSMITH_PROJECT || 'minmi-local') : undefined;
 // Disable implicit framework tracing: it can export prompts and responses.
-for (const name of ['LANGSMITH_TRACING', 'LANGSMITH_TRACING_V2', 'LANGCHAIN_TRACING', 'LANGCHAIN_TRACING_V2']) process.env[name] = 'false';
+for (const name of ['LANGSMITH_TRACING', 'LANGSMITH_TRACING_V2', 'LANGCHAIN_TRACING', 'LANGCHAIN_TRACING_V2', 'LANGCHAIN_VERBOSE']) process.env[name] = 'false';
 mkdirSync('.data', { recursive: true, mode: 0o700 });
 const db = new PGlite('.data/app-db');
 const store = new Store(db);

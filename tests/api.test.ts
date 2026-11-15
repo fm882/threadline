@@ -39,3 +39,14 @@ it('refuses admission when the gateway is unconfigured', async () => {
     expect((await app.request('/api/conversations/test/turns', { method: 'POST' })).status).toBe(503);
   } finally { await db.close(); }
 });
+
+it('rejects nonlocal origins, untrusted host headers and oversized requests', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    expect((await app.request('/api/conversations', { method: 'POST', headers: { origin: 'http://evil.example' } })).status).toBe(403);
+    expect((await app.request('/api/conversations', { method: 'POST', headers: { host: 'evil.example' } })).status).toBe(403);
+    expect((await app.request('/api/conversations/test/turns', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key' }, body: JSON.stringify({ input: 'x'.repeat(40000) }) })).status).toBe(413);
+  } finally { await db.close(); }
+});
