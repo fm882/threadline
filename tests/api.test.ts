@@ -109,3 +109,23 @@ it('returns a conflict for another active turn', async () => {
     expect((await response.json()).error).toContain('active');
   } finally { await db.close(); }
 });
+
+it('derives identity on the server and rejects untrusted identity fields', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const alice = await store.createConversation('alice');
+    const bob = await store.createConversation('bob');
+    const run = await store.admit('bob', bob, 'bob-key', 'private');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const list = await (await app.request('/api/conversations', { headers: { 'x-owner-id': 'bob' } })).json();
+    expect(list.conversations.map((c: { id: string }) => c.id)).toEqual([alice]);
+    const attempt = await app.request(`/api/conversations/${bob}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key', 'x-owner-id': 'bob' }, body: JSON.stringify({ input: 'hello' }) });
+    expect(attempt.status).toBe(404);
+    expect((await app.request(`/api/conversations/${bob}/messages`)).status).toBe(404);
+    expect((await app.request(`/api/runs/${run}`)).status).toBe(404);
+    expect((await app.request(`/api/runs/${run}/events`)).status).toBe(404);
+    const field = await app.request(`/api/conversations/${alice}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key' }, body: JSON.stringify({ input: 'hello', owner_id: 'bob' }) });
+    expect(field.status).toBe(400);
+  } finally { await db.close(); }
+});
