@@ -92,6 +92,21 @@ export class Store {
     return (await this.db.query<Message>('SELECT id, role, content, ordinal, created_at FROM messages WHERE owner_id = $1 AND conversation_id = $2 AND ordinal > $3 ORDER BY ordinal LIMIT $4', [owner, conversation, after, limit])).rows;
   }
 
+  async context(owner: string, runId: string) {
+    const run = await this.getRun(owner, runId);
+    const current = await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at
+      FROM messages m JOIN runs r ON r.turn_id = m.turn_id
+      WHERE r.id = $1 AND r.owner_id = $2 AND m.role = 'user'`, [runId, owner]);
+    if (!current.rows.length) throw new NotFound('Run input not found');
+    const history = await this.db.query<Message>(`SELECT * FROM (
+      SELECT m.id, m.role, m.content, m.ordinal, m.created_at FROM messages m
+      JOIN turns t ON t.id = m.turn_id
+      WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal <= $3 AND t.status = 'completed'
+      ORDER BY m.ordinal DESC LIMIT 200
+      ) recent ORDER BY ordinal`, [owner, run.conversation_id, run.cutoff]);
+    return { current: current.rows[0], history: history.rows };
+  }
+
   async events(owner: string, id: string, after = 0) {
     await this.getRun(owner, id);
     return (await this.db.query<{ id: number; kind: string; data: string }>('SELECT id, kind, data FROM run_events WHERE run_id = $1 AND id > $2 ORDER BY id LIMIT 100', [id, after])).rows;

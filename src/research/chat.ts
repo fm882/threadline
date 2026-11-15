@@ -34,10 +34,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
     try {
       const record = await store.getRun(owner, run);
       if (record.status !== 'active') return;
-      const all = await store.messages(owner, record.conversation_id, 0, 10_000);
-      const current = all.find(m => m.ordinal === record.cutoff + 1);
-      if (!current || current.role !== 'user') throw new Error('Missing current input');
-      const prior = all.filter(m => m.ordinal <= record.cutoff);
+      const { current, history: prior } = await store.context(owner, run);
       const selected: ChatMessage[] = [];
       let size = current.content.length;
       // Select whole prior user/assistant pairs from newest to oldest.

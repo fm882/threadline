@@ -35,3 +35,22 @@ it('publishes a safe failure without exposing provider details', async () => {
     expect(result.error).not.toContain('secret');
   } finally { await db.close(); }
 });
+
+it('omits failed turns and includes completed history before the fixed cutoff', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const first = await store.admit('alice', conversation, '1', 'first');
+    await store.publish('alice', first, 'first answer');
+    const failed = await store.admit('alice', conversation, '2', 'failed question');
+    await store.fail('alice', failed, 'failed');
+    const current = await store.admit('alice', conversation, '3', 'current');
+    const run = createChatRunner(store, SqliteSaver.fromConnString(':memory:'), async messages => {
+      expect(messages.map(m => m.content)).toEqual(['first', 'first answer', 'current']);
+      return 'done';
+    });
+    await run('alice', current);
+    expect((await store.getRun('alice', current)).status).toBe('completed');
+  } finally { await db.close(); }
+});
