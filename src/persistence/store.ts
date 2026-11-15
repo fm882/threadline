@@ -116,6 +116,13 @@ export class Store {
     return result.rows[0];
   }
 
+  async activeRun(owner: string, conversation: string) {
+    const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
+    if (!owned.rows.length) throw new NotFound('Conversation not found');
+    const result = await this.db.query<{ id: string }>("SELECT id FROM runs WHERE conversation_id = $1 AND owner_id = $2 AND status = 'active'", [conversation, owner]);
+    return result.rows[0]?.id ?? null;
+  }
+
   async messages(owner: string, conversation: string, after = 0, limit = 50): Promise<Message[]> {
     const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
     if (!owned.rows.length) throw new NotFound('Conversation not found');

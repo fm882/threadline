@@ -41,6 +41,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     if (!offset.success) return c.json({ error: 'Invalid offset' }, 400);
     return c.json({ conversations: await store.listConversations(owner(c.req.raw), 50, offset.data) });
   });
+  app.get('/api/conversations/:id/active-run', async c => c.json({ runId: await store.activeRun(owner(c.req.raw), c.req.param('id')) }));
   app.get('/api/conversations/:id/messages', async c => {
     const after = cursorSchema.safeParse(c.req.query('after'));
     if (!after.success) return c.json({ error: 'Invalid cursor' }, 400);

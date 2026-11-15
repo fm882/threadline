@@ -46,7 +46,13 @@ function App() {
   }
   async function select(id: string) {
     selected.current = id; setConversation(id); setMessages([]); setStreamed(''); setError('');
-    try { await history(id); } catch (e) { setError((e as Error).message); }
+    try {
+      await history(id);
+      const { runId } = await api<{ runId: string | null }>(`/api/conversations/${id}/active-run`);
+      if (selected.current !== id) return;
+      if (runId) { setBusy(true); setProgress('Reconnecting to the run…'); activeRunRef.current = runId; setActiveRun(runId); watchRun(id, runId); }
+      else await history(id);
+    } catch (e) { setError((e as Error).message); }
   }
   async function create() {
     try { const data = await api<{ id: string }>('/api/conversations', { method: 'POST' }); await list(); await select(data.id); }
@@ -66,6 +72,17 @@ function App() {
       const match = /^\[source:([0-9a-f-]{36})\]$/i.exec(part);
       return match && citationIds.includes(match[1]) ? <button className="citation" key={index} onClick={() => void inspect(match[1])}>Source</button> : part;
     });
+  }
+  function watchRun(id: string, runId: string) {
+    const events = new EventSource(`/api/runs/${runId}/events`); source.current = events;
+    const current = () => activeRunRef.current === runId;
+    const terminal = () => { events.close(); if (source.current === events) source.current = null; activeRunRef.current = ''; setStreamed(''); setBusy(false); setActiveRun(''); };
+    events.addEventListener('progress', event => { if (!current()) return; const stage = JSON.parse((event as MessageEvent).data).stage; setProgress(stage === 'searching' ? 'Searching the web…' : 'Reviewing sources…'); });
+    events.addEventListener('delta', event => { if (current()) setStreamed(value => value + JSON.parse((event as MessageEvent).data).content); });
+    events.addEventListener('completed', () => { if (!current()) return; terminal(); setError(''); void history(id).catch(e => setError(e.message)); });
+    events.addEventListener('failed', event => { if (!current()) return; terminal(); setError(JSON.parse((event as MessageEvent).data).message); void history(id).catch(e => setError(e.message)); });
+    events.addEventListener('cancelled', () => { if (!current()) return; terminal(); setError(''); setNotice('Run stopped.'); void history(id).catch(e => setError(e.message)); });
+    events.onerror = () => { if (current()) setError('Connection interrupted. Reconnecting to the run…'); };
   }
   async function send(event: FormEvent) {
     event.preventDefault();
@@ -87,15 +104,7 @@ function App() {
       const result = await api<{ runId: string }>(`/api/conversations/${id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': attempt.key }, body: JSON.stringify({ input, verifyCurrent: attempt.verifyCurrent }) });
       pending.current = null; activeRunRef.current = result.runId; setActiveRun(result.runId); setDraft('');
       void history(id).catch(e => setError(e.message));
-      const events = new EventSource(`/api/runs/${result.runId}/events`); source.current = events;
-      const current = () => activeRunRef.current === result.runId;
-      const terminal = () => { events.close(); if (source.current === events) source.current = null; activeRunRef.current = ''; setStreamed(''); setBusy(false); setActiveRun(''); };
-      events.addEventListener('progress', event => { if (!current()) return; const stage = JSON.parse((event as MessageEvent).data).stage; setProgress(stage === 'searching' ? 'Searching the web…' : 'Reviewing sources…'); });
-      events.addEventListener('delta', event => { if (current()) setStreamed(value => value + JSON.parse((event as MessageEvent).data).content); });
-      events.addEventListener('completed', () => { if (!current()) return; terminal(); setError(''); void history(id).catch(e => setError(e.message)); });
-      events.addEventListener('failed', event => { if (!current()) return; terminal(); setError(JSON.parse((event as MessageEvent).data).message); void history(id).catch(e => setError(e.message)); });
-      events.addEventListener('cancelled', () => { if (!current()) return; terminal(); setError(''); setNotice('Run stopped.'); void history(id).catch(e => setError(e.message)); });
-      events.onerror = () => { if (current()) setError('Connection interrupted. Reconnecting to the run…'); };
+      watchRun(id, result.runId);
     } catch (e) { setError((e as Error).message); if (!activeRunRef.current) setBusy(false); }
     finally { sending.current = false; }
   }

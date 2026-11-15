@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 const live = process.env.MINMI_LIVE_BROWSER === '1';
 const cancel = process.env.MINMI_TEST_CANCEL === '1';
 const replace = process.env.MINMI_TEST_REPLACE === '1';
+const reconnect = process.env.MINMI_TEST_RECONNECT === '1';
 let requestCount = 0;
 const dir = await mkdtemp(join(tmpdir(), 'minmi-browser-'));
 const gateway = createServer(async (req, res) => {
@@ -20,7 +21,7 @@ const gateway = createServer(async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const chunk = content => JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: { content }, finish_reason: null }] });
   res.write(`data: ${chunk(replace && thisRequest > 1 ? 'Replacement ' : 'Browser ')}\n\n`);
-  setTimeout(() => res.end(`data: ${chunk('answer')}\n\ndata: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`), cancel || (replace && thisRequest === 1) ? 5000 : 300);
+  setTimeout(() => res.end(`data: ${chunk('answer')}\n\ndata: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`), cancel || reconnect || (replace && thisRequest === 1) ? 5000 : 300);
 });
 gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
 const port = gateway.address().port;
@@ -37,7 +38,16 @@ try {
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill(live ? 'Reply exactly: Browser answer' : 'Browser question');
   await page.getByRole('button', { name: 'Send' }).click();
-  if (replace) {
+  if (reconnect) {
+    await page.getByRole('button', { name: 'Stop response' }).waitFor();
+    await page.reload();
+    await page.getByRole('button', { name: /Conversation 1/ }).click();
+    await page.getByRole('button', { name: 'Stop response' }).waitFor();
+    await page.getByText('Browser answer', { exact: true }).waitFor({ timeout: 15000 });
+    assert.equal(requestCount, 1);
+    assert.equal(await page.locator('article.assistant .content').count(), 1);
+    console.log('Browser reconnection passed with a synthetic gateway.');
+  } else if (replace) {
     await page.getByRole('button', { name: 'Stop response' }).waitFor();
     await page.getByLabel('Your message').fill('Replacement question');
     await page.waitForTimeout(500);

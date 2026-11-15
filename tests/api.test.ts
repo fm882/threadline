@@ -251,3 +251,17 @@ it('returns completed when publication wins before cancellation', async () => {
     expect((await store.events('alice', run)).map(event => event.kind)).toEqual(['accepted', 'completed']);
   } finally { await db.close(); }
 });
+
+it('only exposes a conversation active run to its owner', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'hello');
+    const app = createApp({ store, owner: req => req.headers.get('x-fixture-owner') || 'alice', ready: () => null, run: async () => {} });
+    expect((await (await app.request(`/api/conversations/${conversation}/active-run`)).json()).runId).toBe(run);
+    expect((await app.request(`/api/conversations/${conversation}/active-run`, { headers: { 'x-fixture-owner': 'bob' } })).status).toBe(404);
+    await store.publish('alice', run, 'done');
+    expect((await (await app.request(`/api/conversations/${conversation}/active-run`)).json()).runId).toBeNull();
+  } finally { await db.close(); }
+});
