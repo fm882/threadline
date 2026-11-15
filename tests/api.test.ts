@@ -149,3 +149,16 @@ it('does not miss publication that commits between event and state reads', async
     expect(data).toContain('done');
   } finally { await db.close(); }
 });
+
+it('preserves original whitespace and treats altered whitespace as a different payload', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const id = await store.createConversation('alice');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const submit = (input: string) => app.request(`/api/conversations/${id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'one' }, body: JSON.stringify({ input }) });
+    expect((await submit('  hello\n')).status).toBe(202);
+    expect((await store.messages('alice', id))[0].content).toBe('  hello\n');
+    expect((await submit('hello')).status).toBe(409);
+  } finally { await db.close(); }
+});
