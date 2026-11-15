@@ -54,3 +54,24 @@ it('omits failed turns and includes completed history before the fixed cutoff', 
     expect((await store.getRun('alice', current)).status).toBe('completed');
   } finally { await db.close(); }
 });
+
+it('emits redacted lifecycle metadata and ignores exporter failures', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'trace', 'private input');
+    let traceText = '';
+    const runner = createChatRunner(store, SqliteSaver.fromConnString(':memory:'), async () => 'private output', () => {}, async trace => {
+      traceText = JSON.stringify(trace);
+      throw new Error('export failure');
+    });
+    await runner('alice', run);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect((await store.getRun('alice', run)).status).toBe('completed');
+    expect(traceText).toContain('admission');
+    expect(traceText).toContain('inference');
+    expect(traceText).toContain('publication');
+    expect(traceText).not.toContain('private');
+  } finally { await db.close(); }
+});

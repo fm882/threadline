@@ -3,6 +3,7 @@ import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import { Store } from '../persistence/store.js';
+import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 
 export type ChatMessage = { role: string; content: string };
 export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => Promise<string>;
@@ -29,11 +30,12 @@ export function gatewayClient(baseURL: string, apiKey: string, model: string): C
 
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<string>() });
 
-export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}) {
+export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink) {
   return async (owner: string, run: string) => {
+    const record = await store.getRun(owner, run);
+    if (record.status !== 'active') return;
+    const trace = traceTurn(run, sink);
     try {
-      const record = await store.getRun(owner, run);
-      if (record.status !== 'active') return;
       const { current, history: prior } = await store.context(owner, run);
       const selected: ChatMessage[] = [];
       let size = current.content.length;
@@ -47,14 +49,16 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       }
       selected.push({ role: 'user', content: current.content });
       if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
+      trace.stage('inference');
       const graph = new StateGraph(State)
         .addNode('chat', async state => ({ answer: await client(state.messages, chunk => onChunk(run, chunk), AbortSignal.timeout(60_000)) }))
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
-      await store.publish(owner, run, output.answer);
+      if (await store.publish(owner, run, output.answer)) trace.stage('publication');
     } catch {
+      trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.
       await store.fail(owner, run, 'The chat service failed or timed out. Check gateway configuration and try again.');
-    }
+    } finally { trace.finish(); }
   };
 }
