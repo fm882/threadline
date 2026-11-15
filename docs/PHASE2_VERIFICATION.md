@@ -11,3 +11,5 @@ The browser fixture verifies progress appears before the answer and that HTML an
 Ordinary search results may be reused in memory for five minutes within the same owner scope; explicit current verification bypasses the cache. Frozen-clock tests confirm a cache hit retains the original observation timestamp when registered for a later run, and the browser fixture checks the displayed timestamp and snippet representation.
 
 The recorded research client suite fixes both the observation and evaluation clocks for its answer-contract fixture. Separate recorded responses cover malformed tool JSON, extra tool arguments, hostile source text, and unavailable search; the bounded real-gateway continuation check is separate.
+
+The browser exposes an explicit fresh-verification choice stored with the run. API idempotency tests cover this choice; cache tests confirm that explicit verification bypasses reuse and does not silently fall back after provider failure. Model-boundary tests confirm that a response without a requested search is replaced by a limitation. Heuristic detection supplements the explicit control and may miss implicit wording.
