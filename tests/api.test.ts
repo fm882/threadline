@@ -129,3 +129,23 @@ it('derives identity on the server and rejects untrusted identity fields', async
     expect(field.status).toBe(400);
   } finally { await db.close(); }
 });
+
+it('does not miss publication that commits between event and state reads', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'race', 'hello');
+    const originalEvents = store.events.bind(store);
+    let first = true;
+    store.events = async (...args) => {
+      const result = await originalEvents(...args);
+      if (first) { first = false; await store.publish('alice', run, 'done'); }
+      return result;
+    };
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const data = await (await app.request(`/api/runs/${run}/events`)).text();
+    expect(data).toContain('event: completed');
+    expect(data).toContain('done');
+  } finally { await db.close(); }
+});

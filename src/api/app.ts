@@ -89,7 +89,9 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
           }
           while (pending.length) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ content: pending.shift() }) });
           const state = await store.getRun(identity, id);
-          if (state.status !== 'active' && events.length < 100) break;
+          // Publication may commit between reading events and reading state. Recheck
+          // the durable log before closing so the terminal event is never skipped.
+          if (state.status !== 'active' && events.length < 100 && (await store.events(identity, id, last)).length === 0) break;
           await stream.sleep(250);
         }
       } finally { chunks.off(id, listener); }
