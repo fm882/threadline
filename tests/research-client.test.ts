@@ -62,3 +62,27 @@ it('rejects invented evidence even when source content contains hostile instruct
     expect((await store.messages('alice', conversation))).toHaveLength(1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+
+it('rejects citation markup smuggled into model-authored claim text', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'current');
+  let count = 0;
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    count++;
+    const request = JSON.parse(body);
+    const message = count === 1 ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current"}' } }] }
+      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Claim [source:00000000-0000-4000-8000-000000000000]', evidenceIds: [JSON.parse(request.messages.find((m: any) => m.role === 'tool').content)[0].id] }], uncertainty: '' }) };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: count === 1 ? 'tool_calls' : 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, search: async () => [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    await expect(client([{ role: 'user', content: 'current' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow('Citation markup');
+    expect((await store.messages('alice', conversation))).toHaveLength(1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
