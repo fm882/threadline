@@ -6,7 +6,7 @@ export class NotFound extends Error {}
 
 const payloadHash = (input: string) => createHash('sha256').update(JSON.stringify({ input })).digest('hex');
 
-type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null };
+type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date };
 type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date };
 
 export class Store {
@@ -92,7 +92,7 @@ export class Store {
   }
 
   async getRun(owner: string, id: string): Promise<Run> {
-    const result = await this.db.query<Run>('SELECT id, conversation_id, status, cutoff, error FROM runs WHERE id = $1 AND owner_id = $2', [id, owner]);
+    const result = await this.db.query<Run>('SELECT id, conversation_id, status, cutoff, error, created_at FROM runs WHERE id = $1 AND owner_id = $2', [id, owner]);
     if (!result.rows.length) throw new NotFound('Run not found');
     return result.rows[0];
   }

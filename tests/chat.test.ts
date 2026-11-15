@@ -97,3 +97,28 @@ it('terminates a run at the deadline even when a client ignores abort', async ()
     expect((await store.messages('alice', conversation)).map(m => m.content)).toEqual(['hello']);
   } finally { await db.close(); }
 });
+
+it('exports a correlated synthetic turn through the LangSmith client without user content', async () => {
+  const { langsmithSink } = await import('../src/telemetry/tracing.js');
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const id = await store.admit('alice', conversation, 'traced', 'sensitive question');
+    let exported!: (body: string) => void;
+    const completed = new Promise<string>(resolve => { exported = resolve; });
+    const sink = langsmithSink('fixture', 'synthetic', { apiUrl: 'http://127.0.0.1:12345', fetchImplementation: async (_input, init) => {
+      const body = init?.body;
+      exported(body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body));
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } });
+    const runner = createChatRunner(store, SqliteSaver.fromConnString(':memory:'), async () => 'sensitive answer', () => {}, sink);
+    await runner('alice', id);
+    const body = await Promise.race([completed, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Trace not exported')), 3000))]);
+    const data = JSON.parse(body);
+    expect(data.id).toBe(id);
+    expect(data.extra.metadata.stages.map((s: { name: string }) => s.name)).toEqual(['admission', 'inference', 'publication']);
+    expect(body).not.toContain('sensitive');
+    expect(data.start_time).toBe(new Date((await store.getRun('alice', id)).created_at).getTime());
+  } finally { await db.close(); }
+});

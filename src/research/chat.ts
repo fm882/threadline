@@ -49,7 +49,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
   return async (owner: string, run: string) => {
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
-    const trace = traceTurn(run, sink);
+    const trace = traceTurn(run, sink, new Date(record.created_at).getTime());
     try {
       const { current, history: prior } = await store.context(owner, run);
       const selected: ChatMessage[] = [];
