@@ -17,3 +17,10 @@ it('returns safe errors for invalid provider responses or missing configuration'
   await expect(tavilySearch('key', { fetch: async () => Response.json({ results: [{ url: 'bad' }] }) })('query')).rejects.toThrow('Web search is unavailable');
   await expect(tavilySearch('key', { fetch: async () => { throw new Error('secret'); } })('query')).rejects.not.toThrow('secret');
 });
+
+it('rejects unsafe source schemes and oversized provider responses', async () => {
+  const unsafe = tavilySearch('key', { fetch: async () => Response.json({ results: [{ url: 'javascript:alert(1)', title: 'x', content: 'x' }] }) });
+  await expect(unsafe('query')).rejects.toThrow('Web search is unavailable');
+  const oversized = tavilySearch('key', { fetch: async () => new Response('x'.repeat(1_000_001)) });
+  await expect(oversized('query')).rejects.toThrow('Web search is unavailable');
+});
