@@ -57,3 +57,18 @@ it('exposes citation links only for validated claims on the matching assistant m
     expect(messages[1].citation_ids).toEqual([source.id]);
   } finally { await db.close(); }
 });
+
+it('rejects evidence owned by another user even if its identifier is known', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const aliceConversation = await store.createConversation('alice');
+    const bobConversation = await store.createConversation('bob');
+    const aliceRun = await store.admit('alice', aliceConversation, 'a', 'question');
+    const bobRun = await store.admit('bob', bobConversation, 'b', 'question');
+    const [foreign] = await store.registerEvidence('bob', bobRun, [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2025-01-02T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }]);
+    await expect(store.publish('alice', aliceRun, 'answer', [{ claim: 'Claim', evidenceIds: [foreign.id] }])).rejects.toBeInstanceOf(Conflict);
+    expect((await store.getRun('alice', aliceRun)).status).toBe('active');
+    expect((await store.messages('alice', aliceConversation))).toHaveLength(1);
+  } finally { await db.close(); }
+});

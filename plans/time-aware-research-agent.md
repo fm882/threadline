@@ -98,7 +98,7 @@ A user asks a current research question and sees progress followed by a validate
 
 - [x] A current question completes through UI, authorized run, search, model continuation, structured validation, persisted answer, and citation inspection.
 - [ ] Exactly one model-visible tool is available. Runtime supplies identity and budgets; retrieved text cannot expand authority.
-- [ ] Citations reference actual authorized observations registered with the run; invented or wrong-owner identifiers prevent publication.
+- [x] Citations reference actual authorized observations registered with the run; invented or wrong-owner identifiers prevent publication.
 - [ ] Citation inspection displays snippet/page-excerpt representation and original observation time. Cache hits never create a new observation timestamp.
 - [ ] Freshness policy distinguishes explicit current verification from ordinary reuse; stale or unavailable research is disclosed.
 - [ ] Research content is published after validation while progress arrives earlier. Source text and hostile Markdown are handled safely.
