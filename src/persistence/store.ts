@@ -7,7 +7,7 @@ export class NotFound extends Error {}
 
 const payloadHash = (input: string, verifyCurrent = false) => createHash('sha256').update(JSON.stringify(verifyCurrent ? { input, verifyCurrent } : { input })).digest('hex');
 
-type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date; verify_current: boolean };
+type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date; verify_current: boolean; timezone: string };
 type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date; citation_ids?: string[] };
 
 export class Store {
@@ -41,6 +41,7 @@ export class Store {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       ALTER TABLE runs ADD COLUMN IF NOT EXISTS verify_current BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE runs ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
       CREATE TABLE IF NOT EXISTS jobs (
         run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL
       );
@@ -112,7 +113,7 @@ export class Store {
   async admit(owner: string, conversation: string, key: string, input: string, verifyCurrent = false) {
     const hash = payloadHash(input, verifyCurrent);
     return this.db.transaction(async tx => {
-      const owned = await tx.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
+      const owned = await tx.query<{ id: string; timezone: string }>('SELECT id, timezone FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
       if (!owned.rows.length) throw new NotFound('Conversation not found');
       const existing = await tx.query<{ id: string; payload_hash: string }>('SELECT runs.id, turns.payload_hash FROM turns JOIN runs ON runs.turn_id = turns.id WHERE turns.conversation_id = $1 AND turns.idempotency_key = $2', [conversation, key]);
       if (existing.rows.length) {
@@ -127,7 +128,7 @@ export class Store {
       const ordinal = sequence.rows[0].value;
       await tx.query("INSERT INTO turns (id, conversation_id, owner_id, idempotency_key, payload_hash, input, status) VALUES ($1, $2, $3, $4, $5, $6, 'active')", [turn, conversation, owner, key, hash, input]);
       await tx.query("INSERT INTO messages (id, conversation_id, owner_id, turn_id, role, content, ordinal) VALUES ($1, $2, $3, $4, 'user', $5, $6)", [randomUUID(), conversation, owner, turn, input, ordinal]);
-      await tx.query("INSERT INTO runs (id, turn_id, conversation_id, owner_id, status, cutoff, verify_current) VALUES ($1, $2, $3, $4, 'active', $5, $6)", [run, turn, conversation, owner, ordinal - 1, verifyCurrent]);
+      await tx.query("INSERT INTO runs (id, turn_id, conversation_id, owner_id, status, cutoff, verify_current, timezone) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7)", [run, turn, conversation, owner, ordinal - 1, verifyCurrent, owned.rows[0].timezone]);
       await tx.query("INSERT INTO jobs (run_id, status) VALUES ($1, 'pending')", [run]);
       await tx.query("INSERT INTO run_events (run_id, kind, data) VALUES ($1, 'accepted', '{}')", [run]);
       return run;
@@ -135,7 +136,7 @@ export class Store {
   }
 
   async getRun(owner: string, id: string): Promise<Run> {
-    const result = await this.db.query<Run>('SELECT id, conversation_id, status, cutoff, error, created_at, verify_current FROM runs WHERE id = $1 AND owner_id = $2', [id, owner]);
+    const result = await this.db.query<Run>('SELECT id, conversation_id, status, cutoff, error, created_at, verify_current, timezone FROM runs WHERE id = $1 AND owner_id = $2', [id, owner]);
     if (!result.rows.length) throw new NotFound('Run not found');
     return result.rows[0];
   }

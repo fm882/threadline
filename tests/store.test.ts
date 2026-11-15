@@ -71,3 +71,18 @@ it('keeps the admitted input outside its immutable historical cutoff', async () 
     expect((await store.getRun('alice', second)).cutoff).toBe(2);
   } finally { await db.close(); }
 });
+
+it('freezes the conversation timezone at turn admission', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    await store.setTimezone('alice', conversation, 'Asia/Kolkata', 'user', false);
+    const first = await store.admit('alice', conversation, 'first', 'question');
+    await store.setTimezone('alice', conversation, 'America/New_York', 'user', false);
+    expect((await store.getRun('alice', first)).timezone).toBe('Asia/Kolkata');
+    await store.publish('alice', first, 'answer');
+    const second = await store.admit('alice', conversation, 'second', 'another');
+    expect((await store.getRun('alice', second)).timezone).toBe('America/New_York');
+  } finally { await db.close(); }
+});
