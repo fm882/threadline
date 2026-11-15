@@ -28,9 +28,24 @@ export function gatewayClient(baseURL: string, apiKey: string, model: string): C
   };
 }
 
+async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[], onChunk: (chunk: string) => void, timeoutMs: number) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      client(messages, chunk => { if (!controller.signal.aborted) onChunk(chunk); }, controller.signal),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error('Deadline exceeded')); }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<string>() });
 
-export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink) {
+export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000) {
   return async (owner: string, run: string) => {
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
@@ -51,7 +66,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
       trace.stage('inference');
       const graph = new StateGraph(State)
-        .addNode('chat', async state => ({ answer: await client(state.messages, chunk => onChunk(run, chunk), AbortSignal.timeout(60_000)) }))
+        .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), deadlineMs) }))
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
       if (await store.publish(owner, run, output.answer)) trace.stage('publication');

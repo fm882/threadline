@@ -75,3 +75,25 @@ it('emits redacted lifecycle metadata and ignores exporter failures', async () =
     expect(traceText).not.toContain('private');
   } finally { await db.close(); }
 });
+
+it('terminates a run at the deadline even when a client ignores abort', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const id = await store.admit('alice', conversation, 'deadline', 'hello');
+    let finish!: (value: string) => void;
+    let emit!: (chunk: string) => void;
+    const chunks: string[] = [];
+    const run = createChatRunner(store, SqliteSaver.fromConnString(':memory:'), async (_, onChunk) => {
+      emit = onChunk;
+      return new Promise(resolve => { finish = resolve; });
+    }, (_, chunk) => chunks.push(chunk), undefined, 20);
+    await run('alice', id);
+    expect((await store.getRun('alice', id)).status).toBe('failed');
+    emit('late'); finish('late response');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(chunks).toEqual([]);
+    expect((await store.messages('alice', conversation)).map(m => m.content)).toEqual(['hello']);
+  } finally { await db.close(); }
+});
