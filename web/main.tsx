@@ -4,6 +4,7 @@ import './style.css';
 
 type Message = { id: string; role: string; content: string; ordinal: number };
 type Conversation = { id: string; created_at: string };
+type Evidence = { id: string; url: string; title: string; excerpt: string; observed_at: string; provider: string; representation: string };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -21,6 +22,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [ready, setReady] = useState('Checking connection…');
+  const [evidence, setEvidence] = useState<Evidence | null>(null);
   const source = useRef<EventSource | null>(null);
   const selected = useRef('');
   const pending = useRef<{ conversation: string; input: string; key: string } | null>(null);
@@ -50,6 +52,15 @@ function App() {
     check(); const timer = setInterval(check, 10000);
     return () => { clearInterval(timer); source.current?.close(); };
   }, []);
+  async function inspect(id: string) {
+    try { setEvidence(await api<Evidence>(`/api/evidence/${id}`)); } catch (e) { setError((e as Error).message); }
+  }
+  function renderContent(content: string) {
+    return content.split(/(\[source:[0-9a-f-]{36}\])/gi).map((part, index) => {
+      const match = /^\[source:([0-9a-f-]{36})\]$/i.exec(part);
+      return match ? <button className="citation" key={index} onClick={() => void inspect(match[1])}>Source</button> : part;
+    });
+  }
   async function send(event: FormEvent) {
     event.preventDefault();
     if (!draft.trim() || busy) return;
@@ -69,7 +80,7 @@ function App() {
       events.onerror = () => { setError('Connection interrupted. Reconnecting to the run…'); };
     } catch (e) { setError((e as Error).message); setBusy(false); }
   }
-  return <div className="app"><aside><div className="brand">Research chat</div><button className="new" onClick={() => void create()} disabled={busy}>+ New conversation</button><h2>Conversations</h2><nav aria-label="Conversations">{conversations.map((item, i) => <button key={item.id} disabled={busy} className={conversation === item.id ? 'selected' : ''} onClick={() => void select(item.id)}>Conversation {conversations.length - i}<small>{new Date(item.created_at).toLocaleDateString()}</small></button>)}</nav><p className="status"><span className={ready === 'Ready' ? 'dot good' : 'dot'} />{ready}</p></aside><main><header><div><h1>{conversation ? 'Conversation' : 'Start a conversation'}</h1><p>Your conversations are stored locally.</p></div></header><section className="transcript" aria-label="Conversation messages" aria-live="polite">{!conversation ? <div className="empty"><h2>What would you like to explore?</h2><p>Create a conversation to get started.</p><button onClick={() => void create()}>New conversation</button></div> : messages.length === 0 ? <div className="empty"><h2>Start with a question</h2><p>Send a message below to begin.</p></div> : messages.map(message => <article key={message.id} className={message.role}><div className="speaker">{message.role === 'user' ? 'You' : 'Assistant'}</div><div className="content">{message.content}</div></article>)}{streamed && <article className="assistant"><div className="speaker">Assistant</div><div className="content">{streamed}</div></article>}{busy && !streamed && <p className="working">Working on it…</p>}</section><div className="composer">{error && <p className="error" role="alert">{error}</p>}<form onSubmit={event => void send(event)}><label className="sr-only" htmlFor="message">Your message</label><textarea id="message" value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask a question…" maxLength={8000} disabled={!conversation || busy} rows={3} /><button type="submit" disabled={!conversation || busy || !draft.trim()}>Send <span aria-hidden="true">↑</span></button></form><p>Responses can be inaccurate. Check important information.</p></div></main></div>;
+  return <div className="app"><aside><div className="brand">Research chat</div><button className="new" onClick={() => void create()} disabled={busy}>+ New conversation</button><h2>Conversations</h2><nav aria-label="Conversations">{conversations.map((item, i) => <button key={item.id} disabled={busy} className={conversation === item.id ? 'selected' : ''} onClick={() => void select(item.id)}>Conversation {conversations.length - i}<small>{new Date(item.created_at).toLocaleDateString()}</small></button>)}</nav><p className="status"><span className={ready === 'Ready' ? 'dot good' : 'dot'} />{ready}</p></aside><main><header><div><h1>{conversation ? 'Conversation' : 'Start a conversation'}</h1><p>Your conversations are stored locally.</p></div></header><section className="transcript" aria-label="Conversation messages" aria-live="polite">{!conversation ? <div className="empty"><h2>What would you like to explore?</h2><p>Create a conversation to get started.</p><button onClick={() => void create()}>New conversation</button></div> : messages.length === 0 ? <div className="empty"><h2>Start with a question</h2><p>Send a message below to begin.</p></div> : messages.map(message => <article key={message.id} className={message.role}><div className="speaker">{message.role === 'user' ? 'You' : 'Assistant'}</div><div className="content">{renderContent(message.content)}</div></article>)}{streamed && <article className="assistant"><div className="speaker">Assistant</div><div className="content">{streamed}</div></article>}{busy && !streamed && <p className="working">Working on it…</p>}</section>{evidence && <section className="evidence" aria-label="Source details"><button className="close" onClick={() => setEvidence(null)} aria-label="Close source details">×</button><h2>Source details</h2><strong>{evidence.title}</strong><p>Observed {new Date(evidence.observed_at).toLocaleString()} · {evidence.provider} · search snippet</p><blockquote>{evidence.excerpt}</blockquote>{/^https?:\/\//i.test(evidence.url) && <a href={evidence.url} target="_blank" rel="noopener noreferrer">Open source ↗</a>}</section>}<div className="composer">{error && <p className="error" role="alert">{error}</p>}<form onSubmit={event => void send(event)}><label className="sr-only" htmlFor="message">Your message</label><textarea id="message" value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask a question…" maxLength={8000} disabled={!conversation || busy} rows={3} /><button type="submit" disabled={!conversation || busy || !draft.trim()}>Send <span aria-hidden="true">↑</span></button></form><p>Responses can be inaccurate. Check important information.</p></div></main></div>;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
