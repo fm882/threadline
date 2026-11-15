@@ -122,3 +122,19 @@ it('exports a correlated synthetic turn through the LangSmith client without use
     expect(data.start_time).toBe(new Date((await store.getRun('alice', id)).created_at).getTime());
   } finally { await db.close(); }
 });
+
+it('ignores a client chunk emitted after its answer has completed', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const id = await store.admit('alice', conversation, 'late', 'hello');
+    const chunks: string[] = [];
+    let emit!: (chunk: string) => void;
+    const runner = createChatRunner(store, SqliteSaver.fromConnString(':memory:'), async (_, chunk) => { emit = chunk; return 'answer'; }, (_, chunk) => chunks.push(chunk));
+    await runner('alice', id);
+    emit('late');
+    expect(chunks).toEqual([]);
+    expect((await store.getRun('alice', id)).status).toBe('completed');
+  } finally { await db.close(); }
+});

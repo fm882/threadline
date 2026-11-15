@@ -39,6 +39,7 @@ async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[],
       }),
     ]);
   } finally {
+    controller.abort();
     if (timer) clearTimeout(timer);
   }
 }
