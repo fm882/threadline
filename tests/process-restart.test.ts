@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 
 async function listen(server: ReturnType<typeof createServer>) {
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -51,6 +52,10 @@ it('retains a completed HTTP chat after a clean server process restart', async (
     child = start(); await waitReady(base, child);
     const history = await (await fetch(`${base}/api/conversations/${conversation}/messages`)).json();
     expect(history.messages.map((m: { content: string }) => m.content)).toEqual(['persisted question', 'persisted answer']);
+    await stop(child);
+    const saver = SqliteSaver.fromConnString(join(dir, 'checkpoints.sqlite'));
+    const checkpoint = await saver.get({ configurable: { thread_id: runId } });
+    expect(checkpoint?.channel_values.answer).toBe('persisted answer');
   } finally {
     await stop(child);
     await new Promise<void>(resolve => gateway.close(() => resolve()));
