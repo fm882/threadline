@@ -50,6 +50,7 @@ export class Store {
         url TEXT NOT NULL, title TEXT NOT NULL, excerpt TEXT NOT NULL, excerpt_hash TEXT NOT NULL,
         observed_at TIMESTAMPTZ NOT NULL, provider TEXT NOT NULL, representation TEXT NOT NULL
       );
+      ALTER TABLE evidence_observations ADD COLUMN IF NOT EXISTS search_query_id TEXT REFERENCES search_queries(id);
       CREATE TABLE IF NOT EXISTS answer_claims (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL, claim TEXT NOT NULL
       );
@@ -154,17 +155,21 @@ export class Store {
     return result.rows.length > 0;
   }
 
-  async registerEvidence(owner: string, runId: string, observations: SearchResult[]) {
+  async registerEvidence(owner: string, runId: string, observations: SearchResult[], searchQueryId?: string) {
     return this.db.transaction(async tx => {
       const run = await tx.query<{ status: string }>('SELECT status FROM runs WHERE id = $1 AND owner_id = $2', [runId, owner]);
       if (!run.rows.length) throw new NotFound('Run not found');
       if (run.rows[0].status !== 'active') throw new Conflict('Run is no longer active');
+      if (searchQueryId) {
+        const query = await tx.query("SELECT id FROM search_queries WHERE id = $1 AND run_id = $2 AND owner_id = $3 AND status = 'completed'", [searchQueryId, runId, owner]);
+        if (!query.rows.length) throw new Conflict('Search query is not authorized for this run');
+      }
       const registered = [];
       for (const observation of observations) {
         const id = randomUUID();
         const hash = createHash('sha256').update(observation.excerpt).digest('hex');
-        await tx.query(`INSERT INTO evidence_observations (id, run_id, owner_id, url, title, excerpt, excerpt_hash, observed_at, provider, representation)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, runId, owner, observation.url, observation.title, observation.excerpt, hash, observation.observedAt, observation.provider, observation.representation]);
+        await tx.query(`INSERT INTO evidence_observations (id, run_id, owner_id, url, title, excerpt, excerpt_hash, observed_at, provider, representation, search_query_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, runId, owner, observation.url, observation.title, observation.excerpt, hash, observation.observedAt, observation.provider, observation.representation, searchQueryId || null]);
         registered.push({ id, ...observation, excerptHash: hash });
       }
       return registered;
@@ -172,7 +177,7 @@ export class Store {
   }
 
   async evidence(owner: string, id: string) {
-    const result = await this.db.query('SELECT id, run_id, url, title, excerpt, excerpt_hash, observed_at, provider, representation FROM evidence_observations WHERE id = $1 AND owner_id = $2', [id, owner]);
+    const result = await this.db.query('SELECT id, run_id, url, title, excerpt, excerpt_hash, observed_at, provider, representation, search_query_id FROM evidence_observations WHERE id = $1 AND owner_id = $2', [id, owner]);
     if (!result.rows.length) throw new NotFound('Evidence not found');
     return result.rows[0];
   }

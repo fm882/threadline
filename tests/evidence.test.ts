@@ -95,3 +95,23 @@ it('preserves the original observation time when cached search evidence is regis
     expect(second.observedAt).toBe(first.observedAt);
   } finally { await db.close(); }
 });
+
+it('links evidence to an authorized completed search query in the same run', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const firstConversation = await store.createConversation('alice');
+    const secondConversation = await store.createConversation('alice');
+    const run = await store.admit('alice', firstConversation, 'one', 'question');
+    const other = await store.admit('alice', secondConversation, 'two', 'question');
+    const query = await store.startSearch('alice', run, 'search');
+    const otherQuery = await store.startSearch('alice', other, 'search');
+    const observation = [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2025-01-02T00:00:00Z', provider: 'tavily' as const, representation: 'search_snippet' as const }];
+    await expect(store.registerEvidence('alice', run, observation, query)).rejects.toBeInstanceOf(Conflict);
+    await store.finishSearch('alice', run, query, 'completed');
+    await store.finishSearch('alice', other, otherQuery, 'completed');
+    await expect(store.registerEvidence('alice', run, observation, otherQuery)).rejects.toBeInstanceOf(Conflict);
+    const [evidence] = await store.registerEvidence('alice', run, observation, query);
+    expect((await store.evidence('alice', evidence.id) as { search_query_id: string }).search_query_id).toBe(query);
+  } finally { await db.close(); }
+});

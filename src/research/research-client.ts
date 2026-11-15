@@ -37,7 +37,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       if (error instanceof SearchUnavailable) return { content: 'Web search is unavailable, so I cannot verify current information. Please try again later.', claims: [] };
       throw error;
     }
-    const observations = await config.store.registerEvidence(config.owner, config.runId, found);
+    const observations = await config.store.registerEvidence(config.owner, config.runId, found, searchId);
     if (!observations.length) return { content: 'No relevant sources were found. I cannot verify this claim right now.', claims: [] };
     await config.store.recordProgress(config.owner, config.runId, 'reviewing');
     const payload = JSON.stringify(observations.map(({ id, title, excerpt, url, observedAt }) => ({ id, title, excerpt: excerpt.slice(0, 1200), url, observedAt })));
