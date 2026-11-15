@@ -1,6 +1,8 @@
 /** Explicit recency language must not be answered as if an unchecked model response were current. */
 export function requiresCurrentVerification(input: string): boolean {
-  return /\b(today|tonight|now|currently|current|latest|recent(?:ly)?|up[ -]to[ -]date|as of|still (?:correct|accurate|true|available)|changed since|changes since|since (?:then|yesterday|last))\b/i.test(input);
+  const explicit = /\b(today|tonight|now|currently|current|latest|recent(?:ly)?|up[ -]to[ -]date|as of|still (?:correct|accurate|true|available|valid)|changed since|changes since|since (?:then|yesterday|last)|this (?:week|month|year))\b/i;
+  const changed = /\b(change[ds]?|chang(?:ing|es)|updates?|updated|released|shipped|launched|deprecated)\b/i;
+  return explicit.test(input) || (/\bsince\b/i.test(input) && changed.test(input));
 }
 
 export function freshnessNotice(observedAt: string[], now: Date, maxAgeMs = 24 * 60 * 60 * 1000) {
