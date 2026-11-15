@@ -77,6 +77,7 @@ function App() {
     const events = new EventSource(`/api/runs/${runId}/events`); source.current = events;
     const current = () => activeRunRef.current === runId;
     const terminal = () => { events.close(); if (source.current === events) source.current = null; activeRunRef.current = ''; setStreamed(''); setBusy(false); setActiveRun(''); };
+    events.addEventListener('reset', () => { if (current()) { setStreamed(''); setProgress('Reconnecting to the run…'); } });
     events.addEventListener('progress', event => { if (!current()) return; const stage = JSON.parse((event as MessageEvent).data).stage; setProgress(stage === 'searching' ? 'Searching the web…' : 'Reviewing sources…'); });
     events.addEventListener('delta', event => { if (current()) setStreamed(value => value + JSON.parse((event as MessageEvent).data).content); });
     events.addEventListener('completed', () => { if (!current()) return; terminal(); setError(''); void history(id).catch(e => setError(e.message)); });
