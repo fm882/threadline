@@ -163,13 +163,13 @@ A user refers to an earlier shortlist without knowing its conversation location.
 
 ### Acceptance criteria
 
-- [ ] The original five-product shortlist is recovered intact among repeated names and competing discussions; source conversation title/date/link is visible.
-- [ ] Explicit dates and references override a convenient current-conversation candidate when they conflict.
-- [ ] Multiple plausible discussions that materially change the answer produce a clarification interaction; the user's choice resolves a subsequent authorized turn.
-- [ ] An unrelated question does not import cross-conversation history.
-- [ ] The discussion date and requested comparison interval are interpreted independently.
-- [ ] The graph consumes original-backed context and explicit coverage without depending on retriever scores or implementation details.
-- [ ] Original retrieval remains usable with no semantic index; failed discovery is not reported as absence, and bounded expansion cannot become an unbounded search loop.
+- [x] The original five-product shortlist is recovered intact among repeated names and competing discussions; source conversation title/date/link is visible.
+- [x] Explicit dates and references override a convenient current-conversation candidate when they conflict.
+- [x] Multiple plausible discussions that materially change the answer produce a clarification interaction; the user's choice resolves a subsequent authorized turn.
+- [x] An unrelated question does not import cross-conversation history.
+- [x] The discussion date and requested comparison interval are interpreted independently.
+- [x] The graph consumes original-backed context and explicit coverage without depending on retriever scores or implementation details.
+- [x] Original retrieval remains usable with no semantic index; failed discovery is not reported as absence, and bounded expansion cannot become an unbounded search loop.
 
 ---
 
