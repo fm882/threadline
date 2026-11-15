@@ -71,6 +71,15 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     return c.json({ runId: id }, 202);
   });
   app.get('/api/evidence/:id', async c => c.json(await store.evidence(owner(c.req.raw), c.req.param('id'))));
+  app.get('/api/history/:id', async c => {
+    const after = cursorSchema.safeParse(c.req.query('after'));
+    if (!after.success) return c.json({ error: 'Invalid cursor' }, 400);
+    try { return c.json(await store.dateRecallSnapshot(owner(c.req.raw), c.req.param('id'), after.data)); }
+    catch (error) {
+      if (error instanceof Error && error.message === 'Invalid pagination cursor') return c.json({ error: 'Invalid cursor' }, 400);
+      throw error;
+    }
+  });
   app.post('/api/runs/:id/cancel', async c => {
     const id = c.req.param('id');
     const status = await store.cancel(owner(c.req.raw), id);

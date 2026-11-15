@@ -11,7 +11,10 @@ const live = process.env.MINMI_LIVE_BROWSER === '1';
 const cancel = process.env.MINMI_TEST_CANCEL === '1';
 const replace = process.env.MINMI_TEST_REPLACE === '1';
 const reconnect = process.env.MINMI_TEST_RECONNECT === '1';
+const timezoneTest = process.env.MINMI_TEST_TIMEZONE === '1';
+const timezoneFallbackTest = process.env.MINMI_TEST_UTC_FALLBACK === '1';
 const stopRace = process.env.MINMI_TEST_STOP_RACE === '1';
+const originalQuestion = process.env.MINMI_TEST_RECALL === '1' ? 'Browser question about yesterday?' : 'Browser question';
 let requestCount = 0;
 const dir = await mkdtemp(join(tmpdir(), 'minmi-browser-'));
 const gateway = createServer(async (req, res) => {
@@ -34,12 +37,32 @@ async function waitReady() { for (let i = 0; i < 100; i++) { try { if ((await fe
 try {
   child = start(); await waitReady();
   browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
-  const page = await browser.newPage();
+  const page = await browser.newPage(timezoneTest ? { timezoneId: 'Asia/Kolkata' } : {});
+  if (timezoneFallbackTest) await page.addInitScript(() => {
+    const original = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function () { return { ...original.call(this), timeZone: undefined }; };
+  });
   if (stopRace) await page.route('**/api/runs/*/cancel', async route => { await new Promise(resolve => setTimeout(resolve, 1000)); await route.continue(); });
   await page.goto(base);
   await page.getByRole('button', { name: '+ New conversation' }).click();
-  await page.getByLabel('Your message').fill(live ? 'Reply exactly: Browser answer' : 'Browser question');
+  if (timezoneFallbackTest) await page.getByText('UTC fallback: browser timezone unavailable.').waitFor();
+  if (timezoneTest) {
+    await page.waitForFunction(() => document.querySelector('#timezone')?.value === 'Asia/Calcutta' || document.querySelector('#timezone')?.value === 'Asia/Kolkata');
+    await page.getByLabel('Timezone').fill('America/New_York');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText('Timezone saved for future turns.').waitFor();
+    await page.reload();
+    await page.getByRole('button', { name: /Conversation 1/ }).click();
+    await page.waitForFunction(() => document.querySelector('#timezone')?.value === 'America/New_York');
+  }
+  await page.getByLabel('Your message').fill(live ? 'Reply exactly: Browser answer' : originalQuestion);
+  const admission = page.waitForResponse(response => response.request().method() === 'POST' && /\/turns$/.test(response.url()));
   await page.getByRole('button', { name: 'Send' }).click();
+  if (timezoneTest || timezoneFallbackTest) {
+    const { runId } = await (await admission).json();
+    const run = await (await page.request.get(`${base}/api/runs/${runId}`)).json();
+    assert.equal(run.timezone, timezoneTest ? 'America/New_York' : 'UTC');
+  }
   if (stopRace) {
     await page.getByRole('button', { name: 'Stop response' }).click();
     await page.getByText('Browser answer', { exact: true }).waitFor({ timeout: 15000 });
@@ -73,16 +96,30 @@ try {
   } else {
   await page.locator('article.assistant .content').first().waitFor({ timeout: 70000 });
   await page.waitForFunction(() => !document.querySelector('#message')?.disabled, null, { timeout: 70000 });
-  assert.equal(await page.getByText(live ? 'Reply exactly: Browser answer' : 'Browser question', { exact: true }).count(), 1);
+  assert.equal(await page.getByText(live ? 'Reply exactly: Browser answer' : originalQuestion, { exact: true }).count(), 1);
   const answer = await page.locator('article.assistant .content').first().innerText();
   assert.ok(answer.trim());
   if (!live) assert.equal(answer, 'Browser answer');
+  if (process.env.MINMI_TEST_RECALL === '1' || timezoneTest || timezoneFallbackTest) {
+    await page.getByLabel('Your message').fill('What did I ask today?');
+    await page.getByRole('button', { name: 'Send', exact: false }).click();
+    if (timezoneTest || timezoneFallbackTest) {
+      await page.getByText(new RegExp(`Found 1 retained question.*${timezoneTest ? 'America/New_York' : 'UTC'}`)).waitFor();
+    }
+    await page.getByRole('button', { name: 'View original questions' }).click();
+    await page.getByRole('region', { name: 'Original questions' }).getByText(originalQuestion, { exact: true }).waitFor();
+    if (process.env.MINMI_TEST_RECALL === '1') {
+      await page.getByRole('region', { name: 'Original questions' }).getByText(/Relative date in the original message: .*\(.+\)/).waitFor();
+    }
+    assert.equal(await page.getByRole('region', { name: 'Original questions' }).getByText('What did I ask today?', { exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Close original questions' }).click();
+  }
   await stop(); child = start(); await waitReady();
   await page.reload();
   await page.getByRole('button', { name: /Conversation 1/ }).click();
   await page.locator('article.assistant .content').first().waitFor();
   assert.equal(await page.locator('article.assistant .content').first().innerText(), answer);
-  assert.equal(await page.getByText(live ? 'Reply exactly: Browser answer' : 'Browser question', { exact: true }).count(), 1);
+  assert.equal(await page.getByText(live ? 'Reply exactly: Browser answer' : originalQuestion, { exact: true }).count(), 1);
   console.log(`Browser chat and restart passed with ${live ? 'the configured live' : 'a synthetic'} gateway.`);
   }
 } finally {

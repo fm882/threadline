@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SearchResult } from '../search/tavily.js';
+import { interpretDateReference } from '../history/date-reference.js';
 
 export class Conflict extends Error {}
 export class NotFound extends Error {}
@@ -61,6 +62,15 @@ export class Store {
         local_date DATE NOT NULL, timezone TEXT NOT NULL, cutoff INTEGER NOT NULL,
         status TEXT NOT NULL, total INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      CREATE TABLE IF NOT EXISTS history_snapshot_items (
+        snapshot_id TEXT NOT NULL REFERENCES history_snapshots(id), message_id TEXT NOT NULL REFERENCES messages(id),
+        content_hash TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL, recorded_ordinal INTEGER NOT NULL,
+        conversation_id TEXT NOT NULL, PRIMARY KEY(snapshot_id, message_id)
+      );
+      ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ;
+      ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS recorded_ordinal INTEGER;
+      ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS conversation_id TEXT;
+      ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS source_timezone TEXT;
       CREATE TABLE IF NOT EXISTS answer_claims (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL, claim TEXT NOT NULL
       );
@@ -156,7 +166,7 @@ export class Store {
   async messages(owner: string, conversation: string, after = 0, limit = 50): Promise<Message[]> {
     const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
     if (!owned.rows.length) throw new NotFound('Conversation not found');
-    return (await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at, ARRAY(SELECT DISTINCT ce.evidence_id FROM runs r JOIN answer_claims ac ON ac.run_id = r.id JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS citation_ids FROM messages m WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal > $3 ORDER BY m.ordinal LIMIT $4`, [owner, conversation, after, limit])).rows;
+    return (await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at, ARRAY(SELECT DISTINCT ce.evidence_id FROM runs r JOIN answer_claims ac ON ac.run_id = r.id JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS citation_ids, (SELECT hs.id FROM runs r JOIN history_snapshots hs ON hs.run_id = r.id AND hs.owner_id = r.owner_id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS recall_snapshot_id FROM messages m WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal > $3 ORDER BY m.ordinal LIMIT $4`, [owner, conversation, after, limit])).rows;
   }
 
   async context(owner: string, runId: string) {
@@ -186,6 +196,16 @@ export class Store {
     await this.db.query(`UPDATE search_queries SET status = $4 WHERE id = $1 AND owner_id = $2 AND run_id = $3 AND status = 'started'`, [id, owner, runId, status]);
   }
 
+  async recallYears(owner: string, runId: string, month: number, day: number) {
+    const run = await this.getRun(owner, runId);
+    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) throw new Error('Invalid local date');
+    const rows = await this.db.query<{ year: number }>(`SELECT DISTINCT EXTRACT(YEAR FROM created_at AT TIME ZONE $3)::int AS year
+      FROM messages WHERE owner_id = $1 AND role = 'user' AND ordinal <= $2
+        AND created_at <= $6 AND EXTRACT(MONTH FROM created_at AT TIME ZONE $3) = $4
+        AND EXTRACT(DAY FROM created_at AT TIME ZONE $3) = $5 ORDER BY year DESC LIMIT 21`, [owner, run.cutoff, run.timezone, month, day, run.created_at]);
+    return rows.rows.map(row => row.year);
+  }
+
   async questionsOnLocalDate(owner: string, runId: string, date: string, after = 0, limit = 50) {
     const run = await this.getRun(owner, runId);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Invalid local date');
@@ -200,7 +220,7 @@ export class Store {
       const cursor = await this.db.query(`SELECT m.id FROM messages m WHERE ${predicate} AND m.ordinal = $5`, [owner, run.cutoff, date, run.timezone, after]);
       if (!cursor.rows.length) throw new Error('Invalid pagination cursor');
     }
-    const page = await this.db.query<{ id: string; conversation_id: string; content: string; ordinal: number; created_at: Date }>(`SELECT m.id, m.conversation_id, m.content, m.ordinal, m.created_at FROM messages m WHERE ${predicate}
+    const page = await this.db.query<{ id: string; conversation_id: string; content: string; ordinal: number; created_at: Date; source_timezone: string | null }>(`SELECT m.id, m.conversation_id, m.content, m.ordinal, m.created_at, (SELECT r.timezone FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id) AS source_timezone FROM messages m WHERE ${predicate}
       AND ($5::int = 0 OR (m.created_at, m.ordinal) > (SELECT c.created_at, c.ordinal FROM messages c WHERE c.owner_id = $1 AND c.ordinal = $5))
       ORDER BY m.created_at, m.ordinal LIMIT $6`, [owner, run.cutoff, date, run.timezone, after, limit + 1]);
     const messages = page.rows.slice(0, limit);
@@ -217,10 +237,19 @@ export class Store {
     if (run.status !== 'active') throw new Conflict('Run is no longer active');
     const result = await this.questionsOnLocalDate(owner, runId, date, 0, 1);
     const id = randomUUID();
-    const inserted = await this.db.query(`INSERT INTO history_snapshots (id, run_id, owner_id, local_date, timezone, cutoff, status, total)
-      SELECT $1, id, owner_id, $4, $5, $6, $7, $8 FROM runs WHERE id = $2 AND owner_id = $3 AND status = 'active'
-      ON CONFLICT (run_id) DO NOTHING RETURNING id`, [id, runId, owner, date, run.timezone, run.cutoff, result.total ? 'resolved' : 'no_match', result.total]);
-    if (inserted.rows.length) return id;
+    const inserted = await this.db.transaction(async tx => {
+      const saved = await tx.query(`INSERT INTO history_snapshots (id, run_id, owner_id, local_date, timezone, cutoff, status, total)
+        SELECT $1, id, owner_id, $4, $5, $6, $7, $8 FROM runs WHERE id = $2 AND owner_id = $3 AND status = 'active'
+        ON CONFLICT (run_id) DO NOTHING RETURNING id`, [id, runId, owner, date, run.timezone, run.cutoff, result.total ? 'resolved' : 'no_match', result.total]);
+      if (saved.rows.length) await tx.query(`INSERT INTO history_snapshot_items (snapshot_id, message_id, content_hash, recorded_at, recorded_ordinal, conversation_id, source_timezone)
+        SELECT $1, m.id, encode(sha256(convert_to(m.content, 'UTF8')), 'hex'), m.created_at, m.ordinal, m.conversation_id,
+          (SELECT r.timezone FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id) FROM messages m
+        WHERE m.owner_id = $2 AND m.role = 'user' AND m.ordinal <= $3
+          AND m.created_at >= ($4::date::timestamp AT TIME ZONE $5)
+          AND m.created_at < (($4::date + 1)::timestamp AT TIME ZONE $5)`, [id, owner, run.cutoff, date, run.timezone]);
+      return saved.rows.length > 0;
+    });
+    if (inserted) return id;
     const concurrent = await this.db.query<{ id: string; local_date: string }>('SELECT id, local_date::text FROM history_snapshots WHERE run_id = $1 AND owner_id = $2', [runId, owner]);
     if (concurrent.rows[0]?.local_date === date) return concurrent.rows[0].id;
     throw new Conflict('Run is no longer active or has a different history snapshot');
@@ -233,7 +262,22 @@ export class Store {
     const run = await this.getRun(owner, snapshot.run_id);
     if (run.cutoff !== snapshot.cutoff || run.timezone !== snapshot.timezone) throw new Error('History snapshot context mismatch');
     const page = await this.questionsOnLocalDate(owner, snapshot.run_id, snapshot.local_date, after, limit);
-    return { id: snapshotId, runId: snapshot.run_id, status: snapshot.status, coverage: page.total === snapshot.total ? 'complete' : 'incomplete', expectedTotal: snapshot.total, ...page };
+    const verified = await this.db.query<{ total: number; valid: number }>(`SELECT count(*)::int AS total,
+      count(*) FILTER (WHERE m.owner_id = $2 AND m.role = 'user' AND m.created_at = i.recorded_at
+        AND m.ordinal = i.recorded_ordinal AND m.conversation_id = i.conversation_id
+        AND (SELECT r.timezone FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id) IS NOT DISTINCT FROM i.source_timezone
+        AND encode(sha256(convert_to(m.content, 'UTF8')), 'hex') = i.content_hash)::int AS valid
+      FROM history_snapshot_items i LEFT JOIN messages m ON m.id = i.message_id WHERE i.snapshot_id = $1`, [snapshotId, owner]);
+    const coverage = page.total === snapshot.total && verified.rows[0].total === snapshot.total && verified.rows[0].valid === snapshot.total ? 'complete' : 'incomplete';
+    const messages = coverage === 'complete' ? page.messages.map(message => {
+      const hasRelativeDate = /\b(today|yesterday|last\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i.test(message.content);
+      const relative_date = !hasRelativeDate ? null : message.source_timezone
+        ? { ...interpretDateReference(message.content, new Date(message.created_at), message.source_timezone), anchor_time: message.created_at, timezone: message.source_timezone }
+        : { status: 'timezone_unavailable' as const, anchor_time: message.created_at, timezone: null };
+      return { ...message, relative_date };
+    }) : [];
+    return { id: snapshotId, runId: snapshot.run_id, status: snapshot.status, coverage, expectedTotal: snapshot.total, ...page,
+      messages, next: coverage === 'complete' ? page.next : null };
   }
 
   async recordProgress(owner: string, runId: string, stage: 'searching' | 'reviewing') {

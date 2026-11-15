@@ -5,6 +5,7 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 import { Store } from '../persistence/store.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 import { requiresCurrentVerification } from './freshness.js';
+import { prepareExactRecall } from '../history/recall.js';
 import { z } from 'zod';
 
 export type ChatMessage = { role: string; content: string };
@@ -82,6 +83,12 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         return;
       }
       const { current, history: prior } = await store.context(owner, run);
+      const recall = await prepareExactRecall(store, owner, run, current.content, new Date(record.created_at), record.timezone);
+      if (recall !== null) {
+        signal?.throwIfAborted();
+        if (await store.publish(owner, run, recall)) trace.stage('publication');
+        return;
+      }
       const selected: ChatMessage[] = [];
       let size = Buffer.byteLength(current.content);
       // Select whole prior user/assistant pairs from newest to oldest.
