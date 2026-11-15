@@ -79,7 +79,7 @@ A user starts the local application, creates a conversation, sends ordinary chat
 - [x] Identical admission retries return the same turn; changed payloads under the same key conflict. Only one final answer is published.
 - [x] A second active turn in the same conversation receives an explicit conflict. Current input is separate from a fixed historical visibility cutoff.
 - [x] Wrong-owner conversation, message, run, and event access is rejected in multi-identity fixtures; identity cannot be selected by an untrusted request field.
-- [ ] All calls have context/output, time, and attempt limits. Oversized input and dependency failure produce safe errors without leaking provider credentials.
+- [x] All calls have context/output, time, and attempt limits. Oversized input and dependency failure produce safe errors without leaking provider credentials.
 - [ ] A correlated synthetic trace joins admission, inference, and publication; real-user content is redacted by default and exporter failure does not fail the turn.
 
 ---
