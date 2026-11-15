@@ -22,3 +22,20 @@ it('reuses ordinary searches within one owner without refreshing observation tim
   await cache.search('alice', 'query', false, provider);
   expect(calls).toBe(4);
 });
+
+it('does not reuse cached evidence when explicit fresh verification fails', async () => {
+  const cache = createSearchCache({ now: () => Date.parse('2026-01-01T00:00:00Z') });
+  const original: SearchResult[] = [{ url: 'https://example.com/', title: 'Source', excerpt: 'Old excerpt', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }];
+  await cache.search('alice', 'query', false, async () => original);
+  await expect(cache.search('alice', 'query', true, async () => { throw new Error('provider unavailable'); })).rejects.toThrow('provider unavailable');
+});
+
+it('does not cache a result after cancellation', async () => {
+  const cache = createSearchCache();
+  const controller = new AbortController();
+  let calls = 0;
+  const provider = async (): Promise<SearchResult[]> => { calls++; controller.abort(); return [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }]; };
+  await expect(cache.search('alice', 'query', false, provider, controller.signal)).rejects.toThrow('cancelled');
+  await cache.search('alice', 'query', false, provider);
+  expect(calls).toBe(2);
+});
