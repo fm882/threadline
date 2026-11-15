@@ -2,7 +2,7 @@
 
 > Source PRD: [Time-Aware Research Agent — Product Requirements](../PRD.md)
 >
-> The user approved this 12-phase breakdown. All implementation criteria remain unchecked. Existing gateway helpers establish limited inference access only; they do not complete any application phase. This is a local implementation plan, not a deployment or publishing plan.
+> The user approved this 12-phase breakdown. Checked criteria have targeted evidence; unchecked criteria and incomplete phases remain work in progress. This is a local implementation plan, not a deployment or publishing plan.
 
 ## Architectural decisions
 
@@ -76,7 +76,7 @@ A user starts the local application, creates a conversation, sends ordinary chat
 - [ ] A clean local setup reaches a working browser chat through the required npm workflow after documented gateway prerequisites; missing configuration produces actionable readiness/UI errors rather than fabricated replies.
 - [ ] The actual application client completes a chat turn through the logical gateway model binding. Streaming and terminal state are observable; incompatible capabilities fail clearly.
 - [ ] Original input and final response survive a clean process restart and appear in an owned, paginated conversation history.
-- [ ] Identical admission retries return the same turn; changed payloads under the same key conflict. Only one final answer is published.
+- [x] Identical admission retries return the same turn; changed payloads under the same key conflict. Only one final answer is published.
 - [ ] A second active turn in the same conversation receives an explicit conflict. Current input is separate from a fixed historical visibility cutoff.
 - [ ] Wrong-owner conversation, message, run, and event access is rejected in multi-identity fixtures; identity cannot be selected by an untrusted request field.
 - [ ] All calls have context/output, time, and attempt limits. Oversized input and dependency failure produce safe errors without leaking provider credentials.
