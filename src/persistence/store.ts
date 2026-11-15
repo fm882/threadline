@@ -181,6 +181,20 @@ export class Store {
     await this.db.query(`UPDATE search_queries SET status = $4 WHERE id = $1 AND owner_id = $2 AND run_id = $3 AND status = 'started'`, [id, owner, runId, status]);
   }
 
+  async questionsOnLocalDate(owner: string, runId: string, date: string, after = 0, limit = 50) {
+    const run = await this.getRun(owner, runId);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Invalid local date');
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) throw new Error('Invalid local date');
+    if (!Number.isInteger(after) || after < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid pagination');
+    const predicate = `m.owner_id = $1 AND m.role = 'user' AND m.ordinal <= $2
+      AND m.created_at >= ($3::date::timestamp AT TIME ZONE $4)
+      AND m.created_at < (($3::date + 1)::timestamp AT TIME ZONE $4)`;
+    const count = await this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM messages m WHERE ${predicate}`, [owner, run.cutoff, date, run.timezone]);
+    const page = await this.db.query<{ id: string; conversation_id: string; content: string; ordinal: number; created_at: Date }>(`SELECT m.id, m.conversation_id, m.content, m.ordinal, m.created_at FROM messages m WHERE ${predicate} AND m.ordinal > $5 ORDER BY m.ordinal LIMIT $6`, [owner, run.cutoff, date, run.timezone, after, limit]);
+    return { date, timezone: run.timezone, total: count.rows[0].total, messages: page.rows, next: page.rows.length === limit ? page.rows[page.rows.length - 1].ordinal : null };
+  }
+
   async recordProgress(owner: string, runId: string, stage: 'searching' | 'reviewing') {
     const result = await this.db.query(`INSERT INTO run_events (run_id, kind, data)
       SELECT id, 'progress', $3 FROM runs WHERE id = $1 AND owner_id = $2 AND status = 'active' RETURNING id`,
