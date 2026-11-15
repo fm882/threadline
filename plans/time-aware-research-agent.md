@@ -103,7 +103,7 @@ A user asks a current research question and sees progress followed by a validate
 - [ ] Freshness policy distinguishes explicit current verification from ordinary reuse; stale or unavailable research is disclosed.
 - [x] Research content is published after validation while progress arrives earlier. Source text and hostile Markdown are handled safely.
 - [ ] Price passages missing necessary details produce qualification or abstention. If direct fetching is enabled, unsafe destinations, redirects, response sizes, and content types are tested before use.
-- [ ] Frozen-clock search fixtures reproduce the answer contract, including malformed tool responses, prompt injection, and unavailable search. A bounded real-client check verifies tool-result continuation separately.
+- [x] Frozen-clock search fixtures reproduce the answer contract, including malformed tool responses, prompt injection, and unavailable search. A bounded real-client check verifies tool-result continuation separately.
 
 ---
 

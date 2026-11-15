@@ -9,3 +9,5 @@ On 2026-11-15, `node --import tsx scripts/verify-research.mjs` sent two bounded 
 The browser fixture verifies progress appears before the answer and that HTML and Markdown in a claim and source excerpt render as inert text. The research-client tests also cover an unavailable search provider and confirm no model continuation is made after the failure. These are recorded-response tests, not live Tavily verification.
 
 Ordinary search results may be reused in memory for five minutes within the same owner scope; explicit current verification bypasses the cache. Frozen-clock tests confirm a cache hit retains the original observation timestamp when registered for a later run, and the browser fixture checks the displayed timestamp and snippet representation.
+
+The recorded research client suite fixes both the observation and evaluation clocks for its answer-contract fixture. Separate recorded responses cover malformed tool JSON, extra tool arguments, hostile source text, and unavailable search; the bounded real-gateway continuation check is separate.
