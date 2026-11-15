@@ -24,7 +24,7 @@ export function gatewayReadiness(config: ReturnType<typeof gatewayConfig>, reque
     if (config.error) return config.error;
     try {
       const response = await request(`${config.base}/models`, {
-        headers: { Authorization: `Bearer ${config.key}` }, signal: AbortSignal.timeout(2000),
+        headers: { Authorization: `Bearer ${config.key}` }, signal: AbortSignal.timeout(2000), redirect: 'error',
       });
       if (!response.ok) return 'Gateway is unavailable or rejected its credentials. Check gateway configuration.';
       const data: unknown = await response.json();
