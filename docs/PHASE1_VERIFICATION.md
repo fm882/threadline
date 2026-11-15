@@ -9,3 +9,5 @@ The live readiness endpoint returned HTTP 200 with the configured local gateway 
 On 2026-11-15, `node scripts/verify-chat.mjs` also completed one synthetic turn through the HTTP API, graph, LangChain client, local LiteLLM and configured Bedrock route. It observed streamed deltas and the terminal event, restarted the server, and verified the saved exchange. Start the gateway first; this check makes a billable provider request and uses a temporary isolated application database. It does not exercise a browser.
 
 The trace integration test runs a synthetic turn through the real LangSmith client with a recorded HTTP boundary. It verifies run-ID correlation, admission/inference/publication stages, content redaction, and failure isolation. No live LangSmith account export has been verified.
+
+On 2026-11-15, a clean temporary archive of the committed repository completed `npm install` and `npm run typecheck`. The temporary checkout was removed. This establishes dependency installation only; the browser workflow is still incomplete.
