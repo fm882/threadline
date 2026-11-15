@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { PGlite } from '@electric-sql/pglite';
 import { Store } from '../src/persistence/store.js';
 import { researchClient } from '../src/research/research-client.js';
+import { SearchUnavailable } from '../src/search/tavily.js';
 
 it('performs a model tool-call and result continuation with run-owned evidence', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
@@ -153,5 +154,31 @@ it('rejects a tool call requested after reading hostile search content', async (
     await expect(client([{ role: 'user', content: 'find sources' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow('Invalid research response');
     expect(searches).toBe(1);
     expect((await store.messages('alice', conversation))).toHaveLength(1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
+
+it('discloses failed search without asking the model to fabricate a researched answer', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'current pricing');
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume */ } calls++;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"pricing"}' } }] }, finish_reason: 'tool_calls' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, search: async () => { throw new SearchUnavailable('secret provider error'); } });
+    const result = await client([{ role: 'user', content: 'current pricing' }], () => {}, AbortSignal.timeout(5000));
+    expect(typeof result).toBe('object');
+    if (typeof result === 'string') throw new Error('Expected limitation');
+    expect(result.content).toContain('cannot verify current information');
+    expect(result.content).not.toContain('secret');
+    expect(result.claims).toEqual([]);
+    expect(calls).toBe(1);
+    expect(await store.publish('alice', runId, result.content, result.claims)).toBe(true);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
