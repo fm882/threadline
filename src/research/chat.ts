@@ -6,6 +6,7 @@ import { Store } from '../persistence/store.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 import { requiresCurrentVerification } from './freshness.js';
 import { prepareExactRecall } from '../history/recall.js';
+import { historicalContextPrompt, prepareHistoricalContext } from '../history/context.js';
 import { z } from 'zod';
 
 export type ChatMessage = { role: string; content: string };
@@ -22,7 +23,10 @@ export function gatewayClient(baseURL: string, apiKey: string, model: string, ve
     if (verifyCurrent || requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
       return 'Web search is not configured, so I cannot verify current information.';
     }
-    const stream = await client.stream([new SystemMessage('Web search is unavailable. For questions requiring current or externally verified information, clearly say you cannot verify it rather than presenting an unverified current claim.'), ...messages.map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content))], { signal });
+    const historicalContext = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n');
+    const conversation = messages.filter(message => message.role !== 'system').map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content));
+    const system = `Web search is unavailable. For questions requiring current or externally verified information, clearly say you cannot verify it rather than presenting an unverified current claim.${historicalContext ? `\n\n${historicalContext}` : ''}`;
+    const stream = await client.stream([new SystemMessage(system), ...conversation], { signal });
     let result = '';
     for await (const chunk of stream) {
       if (typeof chunk.content !== 'string') throw new Error('Unsupported response format');
@@ -89,6 +93,23 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         if (await store.publish(owner, run, recall)) trace.stage('publication');
         return;
       }
+      const continuity = prior.slice(-8).map(message => message.content).join('\n').slice(-8_000);
+      const reference = await prepareHistoricalContext(store, owner, run, current.content, new Date(record.created_at), record.timezone, continuity);
+      if (reference.kind === 'clarification_needed') {
+        signal?.throwIfAborted();
+        if (await store.publish(owner, run, `${reference.question}\n[reference:${reference.snapshotId}]`)) trace.stage('publication');
+        return;
+      }
+      if (reference.kind === 'no_match') {
+        signal?.throwIfAborted();
+        if (await store.publish(owner, run, 'I could not find a matching earlier discussion in the retained history available to this run.')) trace.stage('publication');
+        return;
+      }
+      if (reference.kind === 'incomplete') {
+        signal?.throwIfAborted();
+        if (await store.publish(owner, run, 'I could not search the retained history completely, so I cannot determine which discussion you meant. Please try again with a topic or date.')) trace.stage('publication');
+        return;
+      }
       const selected: ChatMessage[] = [];
       let size = Buffer.byteLength(current.content);
       // Select whole prior user/assistant pairs from newest to oldest.
@@ -98,6 +119,19 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         if (size + Buffer.byteLength(user.content) + Buffer.byteLength(assistant.content) > MAX_CONTEXT_CHARS) break;
         selected.unshift({ role: user.role, content: user.content }, { role: assistant.role, content: assistant.content });
         size += Buffer.byteLength(user.content) + Buffer.byteLength(assistant.content);
+      }
+      let referenceSnapshotId: string | null = null;
+      if (reference.kind === 'resolved') {
+        const snapshot = await store.referenceSnapshot(owner, reference.snapshotId);
+        const source = snapshot.items[0];
+        if (snapshot.coverage !== 'complete' || !source) {
+          if (await store.publish(owner, run, 'I could not verify the original discussion in the retained history, so I cannot use it. Please try again.')) trace.stage('publication');
+          return;
+        }
+        const context = historicalContextPrompt({ ...source, score: 0 }, reference.coverage, reference.discussionDate, reference.comparisonDate);
+        selected.push({ role: 'system', content: context });
+        size += Buffer.byteLength(context);
+        referenceSnapshotId = reference.snapshotId;
       }
       selected.push({ role: 'user', content: current.content });
       if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
@@ -112,7 +146,9 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
       signal?.throwIfAborted();
-      if (await store.publish(owner, run, typeof output.answer === 'string' ? output.answer : output.answer.content, typeof output.answer === 'string' ? [] : output.answer.claims)) trace.stage('publication');
+      const answer = typeof output.answer === 'string' ? output.answer : output.answer.content;
+      const published = referenceSnapshotId ? `${answer}\n[reference:${referenceSnapshotId}]` : answer;
+      if (await store.publish(owner, run, published, typeof output.answer === 'string' ? [] : output.answer.claims)) trace.stage('publication');
     } catch {
       trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.

@@ -10,6 +10,9 @@ const payloadHash = (input: string, verifyCurrent = false) => createHash('sha256
 
 type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date; verify_current: boolean; timezone: string };
 type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date; citation_ids?: string[] };
+export type ReferenceCandidate = { id: string; conversation_id: string; conversation_title: string; content: string; answer: string; answer_id: string | null; answer_ordinal: number | null; answer_created_at: Date | null; ordinal: number; created_at: Date; score: number };
+export type ReferenceSnapshotItem = Omit<ReferenceCandidate, 'score'> & { rank: number };
+export type ReferenceSnapshot = { id: string; run_id: string; status: string; coverage: string; discussion_date: string | null; comparison_date: string | null; items: ReferenceSnapshotItem[] };
 
 export class Store {
   constructor(readonly db: PGlite) {}
@@ -19,6 +22,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT 'Conversation';
       ALTER TABLE conversations ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
       ALTER TABLE conversations ADD COLUMN IF NOT EXISTS timezone_source TEXT NOT NULL DEFAULT 'unset';
       CREATE TABLE IF NOT EXISTS turns (
@@ -71,6 +75,21 @@ export class Store {
       ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS recorded_ordinal INTEGER;
       ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS conversation_id TEXT;
       ALTER TABLE history_snapshot_items ADD COLUMN IF NOT EXISTS source_timezone TEXT;
+      CREATE TABLE IF NOT EXISTS reference_snapshots (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), owner_id TEXT NOT NULL,
+        status TEXT NOT NULL, coverage TEXT NOT NULL, discussion_date DATE, comparison_date DATE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS reference_snapshot_items (
+        snapshot_id TEXT NOT NULL REFERENCES reference_snapshots(id), message_id TEXT NOT NULL REFERENCES messages(id),
+        content_hash TEXT NOT NULL, recorded_at TIMESTAMPTZ NOT NULL, recorded_ordinal INTEGER NOT NULL,
+        conversation_id TEXT NOT NULL, rank INTEGER NOT NULL, answer_id TEXT REFERENCES messages(id), answer_hash TEXT,
+        answer_recorded_at TIMESTAMPTZ, answer_recorded_ordinal INTEGER, PRIMARY KEY(snapshot_id, message_id)
+      );
+      ALTER TABLE reference_snapshot_items ADD COLUMN IF NOT EXISTS answer_id TEXT REFERENCES messages(id);
+      ALTER TABLE reference_snapshot_items ADD COLUMN IF NOT EXISTS answer_hash TEXT;
+      ALTER TABLE reference_snapshot_items ADD COLUMN IF NOT EXISTS answer_recorded_at TIMESTAMPTZ;
+      ALTER TABLE reference_snapshot_items ADD COLUMN IF NOT EXISTS answer_recorded_ordinal INTEGER;
       CREATE TABLE IF NOT EXISTS answer_claims (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL, claim TEXT NOT NULL
       );
@@ -113,7 +132,7 @@ export class Store {
   }
 
   async listConversations(owner: string, limit = 50, offset = 0) {
-    return (await this.db.query('SELECT id, created_at, timezone, timezone_source FROM conversations WHERE owner_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3', [owner, limit, offset])).rows;
+    return (await this.db.query('SELECT id, title, created_at, timezone, timezone_source FROM conversations WHERE owner_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3', [owner, limit, offset])).rows;
   }
 
   async existingAdmission(owner: string, conversation: string, key: string, input: string, verifyCurrent = false) {
@@ -143,6 +162,7 @@ export class Store {
       const ordinal = sequence.rows[0].value;
       await tx.query("INSERT INTO turns (id, conversation_id, owner_id, idempotency_key, payload_hash, input, status) VALUES ($1, $2, $3, $4, $5, $6, 'active')", [turn, conversation, owner, key, hash, input]);
       await tx.query("INSERT INTO messages (id, conversation_id, owner_id, turn_id, role, content, ordinal) VALUES ($1, $2, $3, $4, 'user', $5, $6)", [randomUUID(), conversation, owner, turn, input, ordinal]);
+      await tx.query("UPDATE conversations SET title = LEFT(regexp_replace($3, '\\s+', ' ', 'g'), 72) WHERE id = $1 AND owner_id = $2 AND title = 'Conversation'", [conversation, owner, input.trim()]);
       await tx.query("INSERT INTO runs (id, turn_id, conversation_id, owner_id, status, cutoff, verify_current, timezone) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7)", [run, turn, conversation, owner, ordinal - 1, verifyCurrent, owned.rows[0].timezone]);
       await tx.query("INSERT INTO jobs (run_id, status) VALUES ($1, 'pending')", [run]);
       await tx.query("INSERT INTO run_events (run_id, kind, data) VALUES ($1, 'accepted', '{}')", [run]);
@@ -166,7 +186,7 @@ export class Store {
   async messages(owner: string, conversation: string, after = 0, limit = 50): Promise<Message[]> {
     const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
     if (!owned.rows.length) throw new NotFound('Conversation not found');
-    return (await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at, ARRAY(SELECT DISTINCT ce.evidence_id FROM runs r JOIN answer_claims ac ON ac.run_id = r.id JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS citation_ids, (SELECT hs.id FROM runs r JOIN history_snapshots hs ON hs.run_id = r.id AND hs.owner_id = r.owner_id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS recall_snapshot_id FROM messages m WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal > $3 ORDER BY m.ordinal LIMIT $4`, [owner, conversation, after, limit])).rows;
+    return (await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at, ARRAY(SELECT DISTINCT ce.evidence_id FROM runs r JOIN answer_claims ac ON ac.run_id = r.id JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS citation_ids, (SELECT hs.id FROM runs r JOIN history_snapshots hs ON hs.run_id = r.id AND hs.owner_id = r.owner_id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS recall_snapshot_id, (SELECT rs.id FROM runs r JOIN reference_snapshots rs ON rs.run_id = r.id AND rs.owner_id = r.owner_id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS reference_snapshot_id FROM messages m WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal > $3 ORDER BY m.ordinal LIMIT $4`, [owner, conversation, after, limit])).rows;
   }
 
   async context(owner: string, runId: string) {
@@ -182,6 +202,93 @@ export class Store {
       ORDER BY m.ordinal DESC LIMIT 200
       ) recent ORDER BY ordinal`, [owner, run.conversation_id, run.cutoff]);
     return { current: current.rows[0], history: history.rows };
+  }
+
+  async findReferenceCandidates(owner: string, runId: string, terms: string[], discussionDate: string | null) {
+    const run = await this.getRun(owner, runId);
+    const patterns = [...new Set(terms.filter(term => term.length >= 2).map(term => `%${term}%`))];
+    const result = await this.db.query<Omit<ReferenceCandidate, 'score'>>(`SELECT m.id, m.conversation_id, c.title AS conversation_title,
+        m.content, COALESCE(a.content, '') AS answer, a.id AS answer_id, a.ordinal AS answer_ordinal, a.created_at AS answer_created_at, m.ordinal, m.created_at
+      FROM messages m JOIN turns t ON t.id = m.turn_id AND t.owner_id = m.owner_id
+      JOIN conversations c ON c.id = m.conversation_id AND c.owner_id = m.owner_id
+      LEFT JOIN messages a ON a.turn_id = m.turn_id AND a.owner_id = m.owner_id AND a.role = 'assistant'
+      WHERE m.owner_id = $1 AND m.role = 'user' AND t.status = 'completed'
+        AND m.ordinal <= $2 AND m.created_at <= $3
+        AND ($4::date IS NULL OR (m.created_at >= ($4::date::timestamp AT TIME ZONE $5)
+          AND m.created_at < (($4::date + 1)::timestamp AT TIME ZONE $5)))
+        AND (cardinality($6::text[]) = 0 OR m.content ILIKE ANY($6::text[]) OR COALESCE(a.content, '') ILIKE ANY($6::text[]))
+      ORDER BY m.created_at DESC, m.ordinal DESC LIMIT 201`, [owner, run.cutoff, run.created_at, discussionDate, run.timezone, patterns]);
+    const candidates = result.rows.map(row => {
+      const body = `${row.content}\n${row.answer}`.toLowerCase();
+      const score = terms.filter(term => body.includes(term)).length;
+      return { ...row, score };
+    }).filter(candidate => !terms.length || candidate.score > 0).sort((left, right) => right.score - left.score || right.created_at.getTime() - left.created_at.getTime());
+    return { candidates, truncated: result.rows.length > 200 };
+  }
+
+  async saveReferenceSnapshot(owner: string, runId: string, status: 'resolved' | 'clarification_needed' | 'no_match' | 'incomplete', coverage: 'complete' | 'incomplete', discussionDate: string | null, comparisonDate: string | null, candidates: ReferenceCandidate[]) {
+    const id = randomUUID();
+    return this.db.transaction(async tx => {
+      const run = await tx.query<{ cutoff: number }>("SELECT cutoff FROM runs WHERE id = $1 AND owner_id = $2 AND status = 'active'", [runId, owner]);
+      if (!run.rows.length) throw new NotFound('Active run not found');
+      await tx.query(`INSERT INTO reference_snapshots (id, run_id, owner_id, status, coverage, discussion_date, comparison_date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)`, [id, runId, owner, status, coverage, discussionDate, comparisonDate]);
+      for (const [index, candidate] of candidates.slice(0, 5).entries()) {
+        await tx.query(`INSERT INTO reference_snapshot_items (snapshot_id, message_id, content_hash, recorded_at, recorded_ordinal, conversation_id, rank,
+            answer_id, answer_hash, answer_recorded_at, answer_recorded_ordinal)
+          SELECT $1, m.id, encode(sha256(convert_to(m.content, 'UTF8')), 'hex'), m.created_at, m.ordinal, m.conversation_id, $7,
+            a.id, CASE WHEN a.id IS NULL THEN NULL ELSE encode(sha256(convert_to(a.content, 'UTF8')), 'hex') END, a.created_at, a.ordinal
+          FROM messages m JOIN runs r ON r.id = $2 AND r.owner_id = $3
+          LEFT JOIN messages a ON a.turn_id = m.turn_id AND a.owner_id = m.owner_id AND a.role = 'assistant'
+          WHERE m.id = $4 AND m.owner_id = $3 AND m.role = 'user' AND m.ordinal <= r.cutoff AND m.ordinal <= $5
+          AND m.created_at <= r.created_at AND m.conversation_id = $6`,
+        [id, runId, owner, candidate.id, run.rows[0].cutoff, candidate.conversation_id, index + 1]);
+      }
+      return id;
+    });
+  }
+
+  async referenceSnapshot(owner: string, snapshotId: string): Promise<ReferenceSnapshot> {
+    const snapshot = await this.db.query<Omit<ReferenceSnapshot, 'items'>>(`SELECT id, run_id, status, coverage, discussion_date::text, comparison_date::text
+      FROM reference_snapshots WHERE id = $1 AND owner_id = $2`, [snapshotId, owner]);
+    if (!snapshot.rows.length) throw new NotFound('Reference snapshot not found');
+    const run = await this.getRun(owner, snapshot.rows[0].run_id);
+    const result = await this.db.query<{ total: number; valid: number }>(`SELECT count(*)::int AS total,
+        count(*) FILTER (WHERE m.owner_id = $2 AND m.role = 'user' AND m.ordinal = i.recorded_ordinal
+          AND m.created_at = i.recorded_at AND m.conversation_id = i.conversation_id
+          AND m.ordinal <= $3 AND m.created_at <= $4
+          AND encode(sha256(convert_to(m.content, 'UTF8')), 'hex') = i.content_hash
+          AND (i.answer_id IS NULL OR EXISTS (SELECT 1 FROM messages a WHERE a.id = i.answer_id AND a.owner_id = $2
+            AND a.role = 'assistant' AND a.turn_id = m.turn_id AND a.ordinal = i.answer_recorded_ordinal
+            AND a.created_at = i.answer_recorded_at AND encode(sha256(convert_to(a.content, 'UTF8')), 'hex') = i.answer_hash)))::int AS valid
+      FROM reference_snapshot_items i LEFT JOIN messages m ON m.id = i.message_id WHERE i.snapshot_id = $1`, [snapshotId, owner, run.cutoff, run.created_at]);
+    if (result.rows[0].total !== result.rows[0].valid) return { ...snapshot.rows[0], coverage: 'incomplete', items: [] };
+    const items = await this.db.query<ReferenceSnapshotItem>(`SELECT m.id, m.conversation_id, c.title AS conversation_title,
+        m.content, COALESCE(a.content, '') AS answer, a.id AS answer_id, a.ordinal AS answer_ordinal, a.created_at AS answer_created_at, m.ordinal, m.created_at, i.rank
+      FROM reference_snapshot_items i JOIN messages m ON m.id = i.message_id AND m.owner_id = $2
+      JOIN conversations c ON c.id = m.conversation_id AND c.owner_id = m.owner_id
+      LEFT JOIN messages a ON a.turn_id = m.turn_id AND a.owner_id = m.owner_id AND a.role = 'assistant'
+      WHERE i.snapshot_id = $1 ORDER BY i.rank`, [snapshotId, owner]);
+    return { ...snapshot.rows[0], items: items.rows };
+  }
+
+  async pendingReferenceSnapshot(owner: string, runId: string) {
+    const run = await this.getRun(owner, runId);
+    const result = await this.db.query<{ id: string }>(`SELECT rs.id FROM messages m
+      JOIN reference_snapshots rs ON rs.run_id = (SELECT r.id FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id)
+      WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.role = 'assistant' AND m.ordinal <= $3
+        AND rs.status = 'clarification_needed'
+        AND m.ordinal = (SELECT max(latest.ordinal) FROM messages latest WHERE latest.owner_id = $1 AND latest.conversation_id = $2 AND latest.ordinal <= $3)
+      ORDER BY m.ordinal DESC LIMIT 1`, [owner, run.conversation_id, run.cutoff]);
+    return result.rows[0]?.id ?? null;
+  }
+
+  async saveReferenceChoice(owner: string, runId: string, previousSnapshotId: string, rank: number) {
+    const previous = await this.referenceSnapshot(owner, previousSnapshotId);
+    if (previous.status !== 'clarification_needed' || previous.coverage !== 'complete') throw new Conflict('Reference choices are no longer available');
+    const candidate = previous.items.find(item => item.rank === rank);
+    if (!candidate) throw new NotFound('Reference choice not found');
+    return this.saveReferenceSnapshot(owner, runId, 'resolved', previous.coverage, previous.discussion_date, previous.comparison_date, [{ ...candidate, score: 0 }]);
   }
 
   async startSearch(owner: string, runId: string, query: string) {

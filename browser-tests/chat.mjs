@@ -14,7 +14,8 @@ const reconnect = process.env.MINMI_TEST_RECONNECT === '1';
 const timezoneTest = process.env.MINMI_TEST_TIMEZONE === '1';
 const timezoneFallbackTest = process.env.MINMI_TEST_UTC_FALLBACK === '1';
 const stopRace = process.env.MINMI_TEST_STOP_RACE === '1';
-const originalQuestion = process.env.MINMI_TEST_RECALL === '1' ? 'Browser question about yesterday?' : 'Browser question';
+const referenceTest = process.env.MINMI_TEST_REFERENCE === '1';
+const originalQuestion = process.env.MINMI_TEST_RECALL === '1' ? 'Browser question about yesterday?' : referenceTest ? 'We shortlisted five CRM tools for a 20-person sales team.' : 'Browser question';
 let requestCount = 0;
 const dir = await mkdtemp(join(tmpdir(), 'minmi-browser-'));
 const gateway = createServer(async (req, res) => {
@@ -31,8 +32,14 @@ gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
 const port = gateway.address().port;
 let child, browser;
 const base = 'http://127.0.0.1:5173';
-function start() { return spawn('npm', ['run', 'dev'], { stdio: 'ignore', env: { ...process.env, APP_DATA_DIR: dir, ...(live ? {} : { INFERENCE_BASE_URL: `http://127.0.0.1:${port}/v1`, INFERENCE_API_KEY: 'fixture' }), LANGSMITH_TRACING: 'false' }, detached: true }); }
-async function stop() { if (!child || child.exitCode !== null) return; const done = once(child, 'exit'); process.kill(-child.pid, 'SIGTERM'); await done; }
+function start() { return spawn('npm', ['run', 'dev'], { stdio: 'ignore', env: { ...process.env, PORT: process.env.PORT || '3457', APP_DATA_DIR: dir, ...(live ? {} : { INFERENCE_BASE_URL: `http://127.0.0.1:${port}/v1`, INFERENCE_API_KEY: 'fixture' }), LANGSMITH_TRACING: 'false' }, detached: true }); }
+async function stop() {
+  if (!child) return;
+  const done = child.exitCode === null ? once(child, 'exit') : Promise.resolve();
+  try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+  await done;
+  child = null;
+}
 async function waitReady() { for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/health/ready`)).ok) return; } catch {} await new Promise(r => setTimeout(r, 100)); } throw new Error('App did not become ready'); }
 try {
   child = start(); await waitReady();
@@ -113,6 +120,46 @@ try {
     }
     assert.equal(await page.getByRole('region', { name: 'Original questions' }).getByText('What did I ask today?', { exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Close original questions' }).click();
+  }
+  if (referenceTest) {
+    await page.getByRole('button', { name: '+ New conversation' }).click();
+    await page.getByLabel('Your message').fill('We need a CRM shortlist for a larger sales team.');
+    await page.getByRole('button', { name: 'Send', exact: false }).click();
+    await page.getByText('Browser answer', { exact: true }).last().waitFor({ timeout: 70000 });
+    await page.getByRole('button', { name: '+ New conversation' }).click();
+    await page.getByLabel('Your message').fill('What about those five CRM tools?');
+    await page.getByRole('button', { name: 'Send', exact: false }).click();
+    await page.getByText('I found several plausible discussions.', { exact: false }).waitFor({ timeout: 70000 });
+    const clarificationButton = page.getByRole('button', { name: 'View discussion source' }).last();
+    const clarificationId = await clarificationButton.getAttribute('data-reference-id');
+    const clarificationResponse = page.waitForResponse(response => response.url().includes('/api/references/') && response.status() === 200);
+    await clarificationButton.click();
+    const clarificationPage = await (await clarificationResponse).json();
+    assert.equal(clarificationPage.items.length, 2);
+    const choices = page.getByRole('region', { name: 'Historical discussion' });
+    await choices.getByText(originalQuestion, { exact: true }).waitFor();
+    await choices.getByText('We need a CRM shortlist for a larger sales team.', { exact: true }).waitFor();
+    await choices.getByRole('button', { name: 'Use option 1' }).click();
+    await page.getByRole('button', { name: 'Send', exact: false }).click();
+    await page.waitForFunction(id => {
+      const assistants = [...document.querySelectorAll('article.assistant .content')];
+      const button = assistants.at(-1)?.querySelector('[data-reference-id]');
+      return button && button.getAttribute('data-reference-id') !== id;
+    }, clarificationId, { timeout: 70000 });
+    const resolvedAnswer = page.locator('article.assistant .content').last();
+    const resolvedButton = resolvedAnswer.getByRole('button', { name: 'View discussion source' });
+    await resolvedButton.waitFor();
+    const resolvedResponse = page.waitForResponse(response => response.url().includes('/api/references/') && response.status() === 200);
+    await resolvedButton.click();
+    const resolvedPage = await (await resolvedResponse).json();
+    assert.equal(resolvedPage.items.length, 1);
+    assert.equal(resolvedPage.items[0].conversation_title, 'We need a CRM shortlist for a larger sales team.');
+    const source = page.getByRole('region', { name: 'Historical discussion' });
+    await source.getByText('We need a CRM shortlist for a larger sales team.', { exact: true }).waitFor();
+    await source.getByText(/2026/).waitFor();
+    await source.getByText('Assistant replied: Browser answer', { exact: true }).waitFor();
+    await source.getByRole('button', { name: 'Open source conversation' }).click();
+    await page.getByText('We need a CRM shortlist for a larger sales team.', { exact: true }).waitFor();
   }
   await stop(); child = start(); await waitReady();
   await page.reload();

@@ -80,6 +80,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
       throw error;
     }
   });
+  app.get('/api/references/:id', async c => c.json(await store.referenceSnapshot(owner(c.req.raw), c.req.param('id'))));
   app.post('/api/runs/:id/cancel', async c => {
     const id = c.req.param('id');
     const status = await store.cancel(owner(c.req.raw), id);
