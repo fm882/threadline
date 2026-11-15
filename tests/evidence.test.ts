@@ -72,3 +72,26 @@ it('rejects evidence owned by another user even if its identifier is known', asy
     expect((await store.messages('alice', aliceConversation))).toHaveLength(1);
   } finally { await db.close(); }
 });
+
+it('preserves the original observation time when cached search evidence is registered on a later run', async () => {
+  const { createSearchCache } = await import('../src/search/cache.js');
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    let now = Date.parse('2026-01-01T00:00:00Z'), calls = 0;
+    const cache = createSearchCache({ now: () => now });
+    const provider = async () => { calls++; return [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: new Date(now).toISOString(), provider: 'tavily' as const, representation: 'search_snippet' as const }]; };
+    const firstRun = await store.admit('alice', conversation, 'first', 'find sources');
+    const [first] = await store.registerEvidence('alice', firstRun, await cache.search('alice', 'query', false, provider));
+    await store.publish('alice', firstRun, 'answer', [{ claim: 'claim', evidenceIds: [first.id] }]);
+    now += 60_000;
+    const secondRun = await store.admit('alice', conversation, 'second', 'find another source');
+    const [second] = await store.registerEvidence('alice', secondRun, await cache.search('alice', 'query', false, provider));
+    expect(calls).toBe(1);
+    const persisted = await store.evidence('alice', second.id) as { observed_at: Date; representation: string };
+    expect(new Date(persisted.observed_at).toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    expect(persisted.representation).toBe('search_snippet');
+    expect(second.observedAt).toBe(first.observedAt);
+  } finally { await db.close(); }
+});

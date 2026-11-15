@@ -38,6 +38,9 @@ try {
   await page.getByRole('button', { name: 'Source', exact: true }).click();
   await page.getByText('Recorded source excerpt').waitFor();
   assert.match(await page.locator('.evidence').innerText(), /Recorded source/);
+  const expectedObservation = await page.evaluate(() => new Date('2026-01-02T12:00:00Z').toLocaleString());
+  assert.match(await page.locator('.evidence').innerText(), /search snippet/);
+  assert.ok((await page.locator('.evidence').innerText()).includes(expectedObservation));
   assert.equal(await page.locator('.evidence img, article img').count(), 0);
   assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
   assert.match(await page.locator('.evidence blockquote').innerText(), /<img src=x/);
