@@ -31,6 +31,7 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     if (typeof answer === 'string') throw new Error('Expected research answer');
     expect(requests[0].tools).toHaveLength(1);
     expect(requests[1].messages.some((m: any) => m.role === 'tool' && m.tool_call_id === 'call_1')).toBe(true);
+    expect(requests[1].tools).toHaveLength(1);
     expect(answer.content).toContain('[source:');
     const progress = (await store.events('alice', runId)).filter(event => event.kind === 'progress');
     expect(progress.map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing']);
