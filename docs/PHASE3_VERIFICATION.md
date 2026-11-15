@@ -1,0 +1,5 @@
+# Phase 3 verification in progress
+
+`tests/process-recovery.test.ts` uses isolated file-backed PGlite and SQLite checkpoint stores with a synthetic gateway. A hard kill during the first in-flight inference request causes recovery to make a second request and publish one logical answer. This demonstrates application-level idempotency for that crash window; it does **not** imply provider-side exactly-once execution. In a real deployment both provider requests could be billed, even if only one final answer is published. Durable execution attempts are capped at two per run; checkpoint publication does not consume another inference attempt.
+
+A second hard-kill fixture stops after the graph has checkpointed a completed answer but before application publication. Restarting with an unavailable gateway publishes that checkpoint without another inference call. These two checks do not cover every crash boundary: search/tool-result recovery, publication races, and more extensive checkpoint reconciliation remain to be tested.

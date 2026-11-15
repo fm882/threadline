@@ -125,7 +125,7 @@ A user reconnects to an ongoing or completed research run, chooses to wait or st
 - [x] Stop-and-send admits the replacement only after the prior run is terminal; waiting does not silently enqueue a new input.
 - [ ] Killing and restarting the local process at admission, tool-result, checkpoint, and publication boundaries produces one logical turn and no duplicate final.
 - [ ] Recovery reconciles application state with the separate checkpoint store; stale execution cannot overwrite terminal state.
-- [ ] The test report distinguishes application idempotency from possible repeated provider billing across a crash window.
+- [x] The test report distinguishes application idempotency from possible repeated provider billing across a crash window.
 
 ---
 
