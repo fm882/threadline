@@ -13,7 +13,7 @@ export const MAX_CONTEXT_CHARS = 16_000;
 export const MAX_INPUT_CHARS = 8_000;
 
 export function gatewayClient(baseURL: string, apiKey: string, model: string): ChatClient {
-  const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL }, maxTokens: 1024, maxRetries: 0, timeout: 55_000 });
+  const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 55_000 });
   return async (messages, onChunk, signal) => {
     const stream = await client.stream(messages.map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content)), { signal });
     let result = '';

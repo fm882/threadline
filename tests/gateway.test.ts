@@ -26,3 +26,22 @@ it('uses the OpenAI-compatible gateway streaming contract with the configured mo
     expect(request.max_tokens).toBe(1024);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+it('does not follow gateway redirects with conversation content or credentials', async () => {
+  let redirected = false;
+  const target = createServer((_req, res) => { redirected = true; res.end(); });
+  await new Promise<void>(resolve => target.listen(0, '127.0.0.1', resolve));
+  const address = target.address();
+  if (!address || typeof address === 'string') throw new Error('Missing listener');
+  const gateway = createServer((_req, res) => { res.writeHead(307, { location: `http://127.0.0.1:${address.port}/capture` }); res.end(); });
+  await new Promise<void>(resolve => gateway.listen(0, '127.0.0.1', resolve));
+  try {
+    const gatewayAddress = gateway.address();
+    if (!gatewayAddress || typeof gatewayAddress === 'string') throw new Error('Missing listener');
+    const client = gatewayClient(`http://127.0.0.1:${gatewayAddress.port}/v1`, 'secret', 'chat-main-v1');
+    await expect(client([{ role: 'user', content: 'private' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
+    expect(redirected).toBe(false);
+  } finally {
+    await Promise.all([new Promise<void>(resolve => gateway.close(() => resolve())), new Promise<void>(resolve => target.close(() => resolve()))]);
+  }
+});
