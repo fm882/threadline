@@ -12,8 +12,9 @@ const gateway = createServer(async (req, res) => {
   let body = ''; for await (const part of req) body += part;
   const input = JSON.parse(body);
   const tool = input.messages.find(m => m.role === 'tool');
-  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'A recorded finding.', evidenceIds: [JSON.parse(tool.content)[0].id] }], uncertainty: 'Recorded fixture.' }) }
+  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'A recorded finding. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', evidenceIds: [JSON.parse(tool.content)[0].id] }], uncertainty: 'Recorded fixture.' }) }
     : { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current information"}' } }] };
+  if (tool) await new Promise(resolve => setTimeout(resolve, 800));
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ id: 'fixture', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: tool ? 'stop' : 'tool_calls' }] }));
 });
@@ -30,11 +31,16 @@ try {
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('What is current? [source:00000000-0000-4000-8000-000000000000]');
   await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByText('Reviewing sources…').waitFor({ timeout: 15000 });
+  assert.equal(await page.getByText('A recorded finding.', { exact: false }).count(), 0);
   await page.getByText('A recorded finding.', { exact: false }).waitFor({ timeout: 15000 });
   assert.equal(await page.getByRole('button', { name: 'Source', exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Source', exact: true }).click();
   await page.getByText('Recorded source excerpt').waitFor();
   assert.match(await page.locator('.evidence').innerText(), /Recorded source/);
+  assert.equal(await page.locator('.evidence img, article img').count(), 0);
+  assert.equal(await page.locator('a[href^="javascript:"]').count(), 0);
+  assert.match(await page.locator('.evidence blockquote').innerText(), /<img src=x/);
   await stop(api); api = startApi(); await ready(); await page.reload();
   await page.getByRole('button', { name: /Conversation 1/ }).click();
   await page.getByRole('button', { name: 'Source', exact: true }).click();

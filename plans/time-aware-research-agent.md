@@ -101,7 +101,7 @@ A user asks a current research question and sees progress followed by a validate
 - [x] Citations reference actual authorized observations registered with the run; invented or wrong-owner identifiers prevent publication.
 - [ ] Citation inspection displays snippet/page-excerpt representation and original observation time. Cache hits never create a new observation timestamp.
 - [ ] Freshness policy distinguishes explicit current verification from ordinary reuse; stale or unavailable research is disclosed.
-- [ ] Research content is published after validation while progress arrives earlier. Source text and hostile Markdown are handled safely.
+- [x] Research content is published after validation while progress arrives earlier. Source text and hostile Markdown are handled safely.
 - [ ] Price passages missing necessary details produce qualification or abstention. If direct fetching is enabled, unsafe destinations, redirects, response sizes, and content types are tested before use.
 - [ ] Frozen-clock search fixtures reproduce the answer contract, including malformed tool responses, prompt injection, and unavailable search. A bounded real-client check verifies tool-result continuation separately.
 
