@@ -8,7 +8,7 @@ import { MAX_INPUT_CHARS } from '../research/chat.js';
 
 export const chunks = new EventEmitter();
 chunks.setMaxListeners(0);
-const bodySchema = z.object({ input: z.string().trim().min(1).max(MAX_INPUT_CHARS) }).strict();
+const bodySchema = z.object({ input: z.string().trim().min(1).max(MAX_INPUT_CHARS).refine(value => Buffer.byteLength(value) <= 16_000) }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
 export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: (owner: string, id: string) => Promise<void> }) {
@@ -50,7 +50,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const key = c.req.header('Idempotency-Key');
     if (!key || key.length > 200) return c.json({ error: 'A valid Idempotency-Key is required' }, 400);
     const parsed = bodySchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Input must be nonempty and at most 8000 characters' }, 400);
+    if (!parsed.success) return c.json({ error: 'Input must be nonempty, at most 8000 characters and at most 16000 UTF-8 bytes' }, 400);
     const identity = owner(c.req.raw);
     const existing = await store.existingAdmission(identity, c.req.param('id'), key, parsed.data.input);
     if (existing) return c.json({ runId: existing }, 202);
@@ -80,6 +80,10 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
         while (!stream.aborted) {
           const events = await store.events(identity, id, last);
           for (const event of events) {
+            if (event.kind === 'completed' || event.kind === 'failed') {
+              chunks.off(id, listener);
+              while (pending.length) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ content: pending.shift() }) });
+            }
             last = event.id;
             await stream.writeSSE({ id: String(event.id), event: event.kind, data: event.data });
           }

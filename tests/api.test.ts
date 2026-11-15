@@ -1,7 +1,7 @@
 import { it, expect } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { Store } from '../src/persistence/store.js';
-import { createApp } from '../src/api/app.js';
+import { createApp, chunks } from '../src/api/app.js';
 
 it('enforces ownership, input validation, idempotency and canonical event replay', async () => {
   const db = new PGlite();
@@ -63,5 +63,36 @@ it('returns an accepted idempotent turn even when readiness later fails', async 
     const submit = (input: string) => app.request(`/api/conversations/${id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key' }, body: JSON.stringify({ input }) });
     expect((await (await submit('hello')).json()).runId).toBe(run);
     expect((await submit('changed')).status).toBe(409);
+  } finally { await db.close(); }
+});
+
+
+it('streams buffered deltas before the canonical terminal event', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async (owner, run) => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      chunks.emit(run, 'partial');
+      await store.publish(owner, run, 'partial answer');
+    } });
+    const accepted = await app.request(`/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'one' }, body: JSON.stringify({ input: 'hello' }) });
+    const { runId } = await accepted.json();
+    const result = await (await app.request(`/api/runs/${runId}/events`)).text();
+    expect(result.indexOf('event: delta')).toBeGreaterThan(-1);
+    expect(result.indexOf('event: delta')).toBeLessThan(result.indexOf('event: completed'));
+  } finally { await db.close(); }
+});
+
+it('rejects input exceeding the byte budget before admission', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const id = await store.createConversation('alice');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const response = await app.request(`/api/conversations/${id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'one' }, body: JSON.stringify({ input: '界'.repeat(6000) }) });
+    expect(response.status).toBe(400);
+    expect(await store.messages('alice', id)).toEqual([]);
   } finally { await db.close(); }
 });
