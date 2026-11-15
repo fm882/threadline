@@ -11,6 +11,7 @@ const live = process.env.MINMI_LIVE_BROWSER === '1';
 const cancel = process.env.MINMI_TEST_CANCEL === '1';
 const replace = process.env.MINMI_TEST_REPLACE === '1';
 const reconnect = process.env.MINMI_TEST_RECONNECT === '1';
+const stopRace = process.env.MINMI_TEST_STOP_RACE === '1';
 let requestCount = 0;
 const dir = await mkdtemp(join(tmpdir(), 'minmi-browser-'));
 const gateway = createServer(async (req, res) => {
@@ -34,11 +35,17 @@ try {
   child = start(); await waitReady();
   browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
   const page = await browser.newPage();
+  if (stopRace) await page.route('**/api/runs/*/cancel', async route => { await new Promise(resolve => setTimeout(resolve, 1000)); await route.continue(); });
   await page.goto(base);
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill(live ? 'Reply exactly: Browser answer' : 'Browser question');
   await page.getByRole('button', { name: 'Send' }).click();
-  if (reconnect) {
+  if (stopRace) {
+    await page.getByRole('button', { name: 'Stop response' }).click();
+    await page.getByText('Browser answer', { exact: true }).waitFor({ timeout: 15000 });
+    await page.getByText('The response completed before it could be stopped.').waitFor();
+    console.log('Browser completion-before-cancel race passed.');
+  } else if (reconnect) {
     await page.getByRole('button', { name: 'Stop response' }).waitFor();
     await page.reload();
     await page.getByRole('button', { name: /Conversation 1/ }).click();
