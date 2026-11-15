@@ -122,7 +122,7 @@ A user reconnects to an ongoing or completed research run, chooses to wait or st
 - [ ] Disconnecting leaves work running; reconnecting recovers canonical progress or final state, including completion before the first subscription.
 - [ ] Event cursors handle replay and unavailable old cursors without duplicate logical answers. Slow subscribers cannot create unbounded buffers.
 - [ ] Cancellation is idempotent, prevents further scheduled work, and blocks late final publication. The UI accurately distinguishes cancellation from completion that already won the race.
-- [ ] Stop-and-send admits the replacement only after the prior run is terminal; waiting does not silently enqueue a new input.
+- [x] Stop-and-send admits the replacement only after the prior run is terminal; waiting does not silently enqueue a new input.
 - [ ] Killing and restarting the local process at admission, tool-result, checkpoint, and publication boundaries produces one logical turn and no duplicate final.
 - [ ] Recovery reconciles application state with the separate checkpoint store; stale execution cannot overwrite terminal state.
 - [ ] The test report distinguishes application idempotency from possible repeated provider billing across a crash window.
