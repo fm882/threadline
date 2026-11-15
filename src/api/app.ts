@@ -11,7 +11,7 @@ chunks.setMaxListeners(0);
 const bodySchema = z.object({ input: z.string().trim().min(1).max(MAX_INPUT_CHARS) }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
-export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null; run: (owner: string, id: string) => Promise<void> }) {
+export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: (owner: string, id: string) => Promise<void> }) {
   const { store, owner, ready, run } = options;
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -31,8 +31,8 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     return c.json({ error: 'Internal service error' }, 500);
   });
   app.get('/health/live', c => c.json({ status: 'live' }));
-  app.get('/health/ready', c => {
-    const problem = ready();
+  app.get('/health/ready', async c => {
+    const problem = await ready();
     return problem ? c.json({ status: 'unavailable', error: problem }, 503) : c.json({ status: 'ready' });
   });
   app.post('/api/conversations', async c => c.json({ id: await store.createConversation(owner(c.req.raw)) }, 201));
@@ -47,7 +47,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     return c.json({ messages: await store.messages(owner(c.req.raw), c.req.param('id'), after.data) });
   });
   app.post('/api/conversations/:id/turns', async c => {
-    const problem = ready();
+    const problem = await ready();
     if (problem) return c.json({ error: problem }, 503);
     const key = c.req.header('Idempotency-Key');
     if (!key || key.length > 200) return c.json({ error: 'A valid Idempotency-Key is required' }, 400);
