@@ -28,9 +28,10 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome', args: ['--no-sandbox'] });
   const page = await browser.newPage(); await page.goto('http://127.0.0.1:5173');
   await page.getByRole('button', { name: '+ New conversation' }).click();
-  await page.getByLabel('Your message').fill('What is current?');
+  await page.getByLabel('Your message').fill('What is current? [source:00000000-0000-4000-8000-000000000000]');
   await page.getByRole('button', { name: 'Send' }).click();
   await page.getByText('A recorded finding.', { exact: false }).waitFor({ timeout: 15000 });
+  assert.equal(await page.getByRole('button', { name: 'Source', exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Source', exact: true }).click();
   await page.getByText('Recorded source excerpt').waitFor();
   assert.match(await page.locator('.evidence').innerText(), /Recorded source/);

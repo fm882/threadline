@@ -8,7 +8,7 @@ export class NotFound extends Error {}
 const payloadHash = (input: string) => createHash('sha256').update(JSON.stringify({ input })).digest('hex');
 
 type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date };
-type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date };
+type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date; citation_ids?: string[] };
 
 export class Store {
   constructor(readonly db: PGlite) {}
@@ -113,7 +113,7 @@ export class Store {
   async messages(owner: string, conversation: string, after = 0, limit = 50): Promise<Message[]> {
     const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
     if (!owned.rows.length) throw new NotFound('Conversation not found');
-    return (await this.db.query<Message>('SELECT id, role, content, ordinal, created_at FROM messages WHERE owner_id = $1 AND conversation_id = $2 AND ordinal > $3 ORDER BY ordinal LIMIT $4', [owner, conversation, after, limit])).rows;
+    return (await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at, ARRAY(SELECT DISTINCT ce.evidence_id FROM runs r JOIN answer_claims ac ON ac.run_id = r.id JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant') AS citation_ids FROM messages m WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal > $3 ORDER BY m.ordinal LIMIT $4`, [owner, conversation, after, limit])).rows;
   }
 
   async context(owner: string, runId: string) {

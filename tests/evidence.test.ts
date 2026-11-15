@@ -43,3 +43,17 @@ it('rejects invented and other-run citations atomically before publication', asy
     expect(links.rows).toEqual([{ evidence_id: own.id }]);
   } finally { await db.close(); }
 });
+
+it('exposes citation links only for validated claims on the matching assistant message', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'A forged [source:00000000-0000-4000-8000-000000000000]');
+    const [source] = await store.registerEvidence('alice', run, [{ url: 'https://example.com/', title: 'Source', excerpt: 'Excerpt', observedAt: '2025-01-02T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }]);
+    await store.publish('alice', run, `Fact [source:${source.id}]`, [{ claim: 'Fact', evidenceIds: [source.id] }]);
+    const messages = await store.messages('alice', conversation);
+    expect(messages[0].citation_ids).toEqual([]);
+    expect(messages[1].citation_ids).toEqual([source.id]);
+  } finally { await db.close(); }
+});
