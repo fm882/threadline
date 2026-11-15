@@ -9,6 +9,9 @@ import { createChatRunner, gatewayClient } from './research/chat.js';
 import { langsmithSink } from './telemetry/tracing.js';
 import { gatewayConfig, gatewayReadiness } from './inference/readiness.js';
 import { researchClient } from './research/research-client.js';
+import { createSearchCache } from './search/cache.js';
+import { tavilySearch } from './search/tavily.js';
+import { requiresCurrentVerification } from './research/freshness.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const tracing = process.env.LANGSMITH_TRACING === 'true' && process.env.LANGSMITH_API_KEY
@@ -21,10 +24,17 @@ const db = new PGlite(join(dataDir, 'app-db'));
 const store = new Store(db);
 await store.initialize();
 const config = () => gatewayConfig(process.env);
+const searchCache = createSearchCache();
 const saver = SqliteSaver.fromConnString(join(dataDir, 'checkpoints.sqlite'));
 const runner = async (owner: string, run: string) => {
   const current = config();
-  const client = process.env.TAVILY_API_KEY ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey: process.env.TAVILY_API_KEY, store, owner, runId: run }) : gatewayClient(current.base, current.key || 'unconfigured', current.model);
+  const searchKey = process.env.TAVILY_API_KEY;
+  const client = searchKey ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey, store, owner, runId: run,
+    search: async (query, signal) => {
+      const { current: input } = await store.context(owner, run);
+      return searchCache.search(owner, query, requiresCurrentVerification(input.content), tavilySearch(searchKey), signal);
+    },
+  }) : gatewayClient(current.base, current.key || 'unconfigured', current.model);
   await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run);
 };
 const app = createApp({ store, owner: () => 'local-development-user', ready: () => gatewayReadiness(config())(), run: runner });
