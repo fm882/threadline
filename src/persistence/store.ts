@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'node:crypto';
 export class Conflict extends Error {}
 export class NotFound extends Error {}
 
+const payloadHash = (input: string) => createHash('sha256').update(JSON.stringify({ input })).digest('hex');
+
 type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null };
 type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date };
 
@@ -55,8 +57,17 @@ export class Store {
     return (await this.db.query('SELECT id, created_at FROM conversations WHERE owner_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3', [owner, limit, offset])).rows;
   }
 
+  async existingAdmission(owner: string, conversation: string, key: string, input: string) {
+    const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
+    if (!owned.rows.length) throw new NotFound('Conversation not found');
+    const result = await this.db.query<{ id: string; payload_hash: string }>('SELECT runs.id, turns.payload_hash FROM turns JOIN runs ON runs.turn_id = turns.id WHERE turns.conversation_id = $1 AND turns.idempotency_key = $2', [conversation, key]);
+    if (!result.rows.length) return null;
+    if (result.rows[0].payload_hash !== payloadHash(input)) throw new Conflict('Idempotency key reused with different input');
+    return result.rows[0].id;
+  }
+
   async admit(owner: string, conversation: string, key: string, input: string) {
-    const hash = createHash('sha256').update(JSON.stringify({ input })).digest('hex');
+    const hash = payloadHash(input);
     return this.db.transaction(async tx => {
       const owned = await tx.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2', [conversation, owner]);
       if (!owned.rows.length) throw new NotFound('Conversation not found');

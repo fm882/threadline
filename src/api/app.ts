@@ -47,13 +47,15 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     return c.json({ messages: await store.messages(owner(c.req.raw), c.req.param('id'), after.data) });
   });
   app.post('/api/conversations/:id/turns', async c => {
-    const problem = await ready();
-    if (problem) return c.json({ error: problem }, 503);
     const key = c.req.header('Idempotency-Key');
     if (!key || key.length > 200) return c.json({ error: 'A valid Idempotency-Key is required' }, 400);
     const parsed = bodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Input must be nonempty and at most 8000 characters' }, 400);
     const identity = owner(c.req.raw);
+    const existing = await store.existingAdmission(identity, c.req.param('id'), key, parsed.data.input);
+    if (existing) return c.json({ runId: existing }, 202);
+    const problem = await ready();
+    if (problem) return c.json({ error: problem }, 503);
     const id = await store.admit(identity, c.req.param('id'), key, parsed.data.input);
     // Identical retries may call the runner again; reserve execution in this process.
     if (!executing.has(id)) {

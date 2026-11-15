@@ -36,7 +36,8 @@ it('refuses admission when the gateway is unconfigured', async () => {
     const store = new Store(db); await store.initialize();
     const app = createApp({ store, owner: () => 'alice', ready: () => 'Configure the gateway', run: async () => {} });
     expect((await app.request('/health/ready')).status).toBe(503);
-    expect((await app.request('/api/conversations/test/turns', { method: 'POST' })).status).toBe(503);
+    const id = await store.createConversation('alice');
+    expect((await app.request(`/api/conversations/${id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key' }, body: JSON.stringify({ input: 'hello' }) })).status).toBe(503);
   } finally { await db.close(); }
 });
 
@@ -48,5 +49,19 @@ it('rejects nonlocal origins, untrusted host headers and oversized requests', as
     expect((await app.request('/api/conversations', { method: 'POST', headers: { origin: 'http://evil.example' } })).status).toBe(403);
     expect((await app.request('/api/conversations', { method: 'POST', headers: { host: 'evil.example' } })).status).toBe(403);
     expect((await app.request('/api/conversations/test/turns', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key' }, body: JSON.stringify({ input: 'x'.repeat(40000) }) })).status).toBe(413);
+  } finally { await db.close(); }
+});
+
+
+it('returns an accepted idempotent turn even when readiness later fails', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const id = await store.createConversation('alice');
+    const run = await store.admit('alice', id, 'key', 'hello');
+    const app = createApp({ store, owner: () => 'alice', ready: () => 'Gateway unavailable', run: async () => {} });
+    const submit = (input: string) => app.request(`/api/conversations/${id}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'key' }, body: JSON.stringify({ input }) });
+    expect((await (await submit('hello')).json()).runId).toBe(run);
+    expect((await submit('changed')).status).toBe(409);
   } finally { await db.close(); }
 });
