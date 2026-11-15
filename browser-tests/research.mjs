@@ -13,7 +13,7 @@ const gateway = createServer(async (req, res) => {
   const input = JSON.parse(body);
   const tool = input.messages.find(m => m.role === 'tool');
   if (!tool) assert.match(input.messages[0].content, /explicitly requests fresh verification/i);
-  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'A recorded finding. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', evidenceIds: [JSON.parse(tool.content)[0].id] }], uncertainty: 'Recorded fixture.' }) }
+  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'A recorded finding. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', kind: 'other', evidenceIds: [JSON.parse(tool.content)[0].id] }], uncertainty: 'Recorded fixture.' }) }
     : { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current information"}' } }] };
   if (tool) await new Promise(resolve => setTimeout(resolve, 800));
   res.writeHead(200, { 'content-type': 'application/json' });

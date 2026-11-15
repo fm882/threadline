@@ -18,7 +18,7 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     else {
       const toolResult = request.messages.find((m: any) => m.role === 'tool');
       const evidence = JSON.parse(toolResult.content)[0];
-      message = { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'The entry tier starts at 12.', evidenceIds: [evidence.id] }], uncertainty: 'Check plan and billing terms.' }) };
+      message = { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'The entry tier starts at 12.', kind: 'pricing', evidenceIds: [evidence.id] }], uncertainty: 'Check plan and billing terms.' }) };
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests.length === 1 ? 'tool_calls' : 'stop' }] }));
@@ -26,7 +26,7 @@ it('performs a model tool-call and result continuation with run-owned evidence',
   server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   try {
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
-    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, now: () => new Date('2026-01-01T01:00:00Z'), search: async () => [{ url: 'https://example.com/', title: 'Source', excerpt: 'The entry price is $12.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, now: () => new Date('2026-01-01T01:00:00Z'), search: async () => [{ url: 'https://example.com/', title: 'Source', excerpt: 'The entry tier starts at 12.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
     const answer = await client([{ role: 'user', content: 'current information' }], () => {}, AbortSignal.timeout(5000));
     expect(typeof answer).toBe('object');
     if (typeof answer === 'string') throw new Error('Expected research answer');
@@ -55,7 +55,7 @@ it('rejects invented evidence even when source content contains hostile instruct
     requests++;
     const message = requests === 1
       ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current"}' } }] }
-      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Invented fact', evidenceIds: ['00000000-0000-4000-8000-000000000000'] }], uncertainty: '' }) };
+      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Invented fact', kind: 'other', evidenceIds: ['00000000-0000-4000-8000-000000000000'] }], uncertainty: '' }) };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'tool_calls' : 'stop' }] }));
   });
@@ -80,7 +80,7 @@ it('rejects citation markup smuggled into model-authored claim text', async () =
     count++;
     const request = JSON.parse(body);
     const message = count === 1 ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current"}' } }] }
-      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Claim [source:00000000-0000-4000-8000-000000000000]', evidenceIds: [JSON.parse(request.messages.find((m: any) => m.role === 'tool').content)[0].id] }], uncertainty: '' }) };
+      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Claim [source:00000000-0000-4000-8000-000000000000]', kind: 'other', evidenceIds: [JSON.parse(request.messages.find((m: any) => m.role === 'tool').content)[0].id] }], uncertainty: '' }) };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: count === 1 ? 'tool_calls' : 'stop' }] }));
   });
