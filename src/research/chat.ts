@@ -38,14 +38,14 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
     try {
       const { current, history: prior } = await store.context(owner, run);
       const selected: ChatMessage[] = [];
-      let size = current.content.length;
+      let size = Buffer.byteLength(current.content);
       // Select whole prior user/assistant pairs from newest to oldest.
       for (let i = prior.length - 1; i > 0; i -= 2) {
         const user = prior[i - 1], assistant = prior[i];
         if (user.role !== 'user' || assistant.role !== 'assistant') break;
-        if (size + user.content.length + assistant.content.length > MAX_CONTEXT_CHARS) break;
+        if (size + Buffer.byteLength(user.content) + Buffer.byteLength(assistant.content) > MAX_CONTEXT_CHARS) break;
         selected.unshift({ role: user.role, content: user.content }, { role: assistant.role, content: assistant.content });
-        size += user.content.length + assistant.content.length;
+        size += Buffer.byteLength(user.content) + Buffer.byteLength(assistant.content);
       }
       selected.push({ role: 'user', content: current.content });
       if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');

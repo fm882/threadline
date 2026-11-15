@@ -1,0 +1,9 @@
+{
+  "version": "local-nova-v1",
+  "chatMain": {
+    "model": "chat-main-v1",
+    "streaming": true,
+    "contextTokens": 32000,
+    "maxOutputTokens": 1024
+  }
+}
