@@ -39,3 +39,16 @@ it('does not cache a result after cancellation', async () => {
   await cache.search('alice', 'query', false, provider);
   expect(calls).toBe(2);
 });
+
+it('does not let a slower earlier search overwrite newer verified evidence', async () => {
+  let time = Date.parse('2026-01-01T00:00:00Z');
+  const cache = createSearchCache({ now: () => time });
+  let release!: (results: SearchResult[]) => void;
+  const slow = cache.search('alice', 'query', false, () => new Promise(resolve => { release = resolve; }));
+  time += 1000;
+  const fresh: SearchResult = { url: 'https://example.com/', title: 'Fresh', excerpt: 'new', observedAt: new Date(time).toISOString(), provider: 'tavily', representation: 'search_snippet' };
+  await cache.search('alice', 'query', true, async () => [fresh]);
+  release([{ ...fresh, title: 'Old', observedAt: '2026-01-01T00:00:00Z' }]);
+  expect((await slow)[0].title).toBe('Old');
+  expect((await cache.search('alice', 'query', false, async () => { throw new Error('Unexpected provider call'); }))[0].title).toBe('Fresh');
+});

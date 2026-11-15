@@ -22,6 +22,10 @@ export function createSearchCache(options: { now?: () => number; ttlMs?: number;
       const results = await provider(query, signal);
       if (signal?.aborted) throw new Error('Search cancelled');
       if (results.length && maximum > 0 && ttl > 0) {
+        const latest = entries.get(key);
+        const oldestObservation = (items: SearchResult[]) => Math.min(...items.map(item => Date.parse(item.observedAt)));
+        // A slower request must not overwrite evidence observed by a newer request.
+        if (latest && latest.expiresAt > now() && oldestObservation(results) < oldestObservation(latest.results)) return results.map(result => ({ ...result }));
         entries.delete(key);
         entries.set(key, { expiresAt: now() + ttl, results: results.map(result => ({ ...result })) });
         while (entries.size > maximum) entries.delete(entries.keys().next().value!);
