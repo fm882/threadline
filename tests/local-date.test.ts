@@ -22,3 +22,26 @@ it('retrieves original questions across a DST local day and respects owner and c
     await expect(store.questionsOnLocalDate('alice', recall, '2025-02-30')).rejects.toThrow('Invalid local date');
   } finally { await db.close(); }
 });
+
+it('paginates chronologically with stable ties and rejects another owner cursor', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    for (const [key, timestamp] of [['later', '2025-05-01T12:00:00.000123Z'], ['earlier', '2025-05-01T10:00:00Z'], ['tied', '2025-05-01T12:00:00.000123Z']]) {
+      const run = await store.admit('alice', conversation, key, key);
+      await db.query("UPDATE messages SET created_at = $1 WHERE turn_id = (SELECT turn_id FROM runs WHERE id = $2) AND role = 'user'", [timestamp, run]);
+      await store.publish('alice', run, 'answer');
+    }
+    const bob = await store.createConversation('bob');
+    const bobRun = await store.admit('bob', bob, 'bob', 'secret');
+    const bobOrdinal = (await store.messages('bob', bob))[0].ordinal;
+    await store.cancel('bob', bobRun);
+    const recall = await store.admit('alice', conversation, 'recall', 'recall');
+    const seen: string[] = []; let cursor = 0;
+    do { const page = await store.questionsOnLocalDate('alice', recall, '2025-05-01', cursor, 1); seen.push(...page.messages.map(message => message.content)); cursor = page.next || 0; } while (cursor);
+    expect(seen).toEqual(['earlier', 'later', 'tied']);
+    await expect(store.questionsOnLocalDate('alice', recall, '2025-05-01', 9999, 1)).rejects.toThrow('Invalid pagination cursor');
+    expect(bobOrdinal).toBe(1);
+  } finally { await db.close(); }
+});

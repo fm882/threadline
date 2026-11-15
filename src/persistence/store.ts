@@ -191,8 +191,15 @@ export class Store {
       AND m.created_at >= ($3::date::timestamp AT TIME ZONE $4)
       AND m.created_at < (($3::date + 1)::timestamp AT TIME ZONE $4)`;
     const count = await this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM messages m WHERE ${predicate}`, [owner, run.cutoff, date, run.timezone]);
-    const page = await this.db.query<{ id: string; conversation_id: string; content: string; ordinal: number; created_at: Date }>(`SELECT m.id, m.conversation_id, m.content, m.ordinal, m.created_at FROM messages m WHERE ${predicate} AND m.ordinal > $5 ORDER BY m.ordinal LIMIT $6`, [owner, run.cutoff, date, run.timezone, after, limit]);
-    return { date, timezone: run.timezone, total: count.rows[0].total, messages: page.rows, next: page.rows.length === limit ? page.rows[page.rows.length - 1].ordinal : null };
+    if (after) {
+      const cursor = await this.db.query(`SELECT m.id FROM messages m WHERE ${predicate} AND m.ordinal = $5`, [owner, run.cutoff, date, run.timezone, after]);
+      if (!cursor.rows.length) throw new Error('Invalid pagination cursor');
+    }
+    const page = await this.db.query<{ id: string; conversation_id: string; content: string; ordinal: number; created_at: Date }>(`SELECT m.id, m.conversation_id, m.content, m.ordinal, m.created_at FROM messages m WHERE ${predicate}
+      AND ($5::int = 0 OR (m.created_at, m.ordinal) > (SELECT c.created_at, c.ordinal FROM messages c WHERE c.owner_id = $1 AND c.ordinal = $5))
+      ORDER BY m.created_at, m.ordinal LIMIT $6`, [owner, run.cutoff, date, run.timezone, after, limit + 1]);
+    const messages = page.rows.slice(0, limit);
+    return { date, timezone: run.timezone, total: count.rows[0].total, messages, next: page.rows.length > limit ? messages[messages.length - 1].ordinal : null };
   }
 
   async recordProgress(owner: string, runId: string, stage: 'searching' | 'reviewing') {
