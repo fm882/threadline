@@ -60,7 +60,12 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     // Identical retries may call the runner again; reserve execution in this process.
     if (!executing.has(id)) {
       executing.add(id);
-      void run(identity, id).finally(() => executing.delete(id)).catch(() => {});
+      void Promise.resolve().then(() => run(identity, id))
+        .catch(async () => {
+          // Never expose worker exceptions or provider details to the client.
+          await store.fail(identity, id, 'The chat service failed or timed out. Check gateway configuration and try again.');
+        })
+        .finally(() => executing.delete(id)).catch(() => {});
     }
     return c.json({ runId: id }, 202);
   });

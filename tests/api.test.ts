@@ -188,3 +188,19 @@ it('keeps the run alive and removes its listener after a subscriber disconnects'
     expect(chunks.listenerCount(runId)).toBe(0);
   } finally { await db.close(); }
 });
+
+it('records a safe terminal failure if the worker rejects unexpectedly', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => { throw new Error('sensitive provider error'); } });
+    const response = await app.request(`/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'one' }, body: JSON.stringify({ input: 'hello' }) });
+    const { runId } = await response.json();
+    for (let n = 0; n < 50 && (await store.getRun('alice', runId)).status === 'active'; n++) await new Promise(resolve => setTimeout(resolve, 20));
+    const result = await store.getRun('alice', runId);
+    expect(result.status).toBe('failed');
+    expect(result.error).not.toContain('sensitive');
+    expect(await store.admit('alice', conversation, 'two', 'try again')).toBeTruthy();
+  } finally { await db.close(); }
+});
