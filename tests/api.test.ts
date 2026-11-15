@@ -162,3 +162,29 @@ it('preserves original whitespace and treats altered whitespace as a different p
     expect((await submit('hello')).status).toBe(409);
   } finally { await db.close(); }
 });
+
+it('keeps the run alive and removes its listener after a subscriber disconnects', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    let release!: () => void;
+    const proceed = new Promise<void>(resolve => { release = resolve; });
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async (owner, id) => {
+      await proceed;
+      await store.publish(owner, id, 'completed after disconnect');
+    } });
+    const response = await app.request(`/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'one' }, body: JSON.stringify({ input: 'hello' }) });
+    const { runId } = await response.json();
+    const stream = await app.request(`/api/runs/${runId}/events`);
+    const reader = stream.body!.getReader();
+    await reader.read();
+    expect(chunks.listenerCount(runId)).toBe(1);
+    await reader.cancel();
+    release();
+    for (let n = 0; n < 50 && (await store.getRun('alice', runId)).status === 'active'; n++) await new Promise(resolve => setTimeout(resolve, 20));
+    expect((await store.getRun('alice', runId)).status).toBe('completed');
+    for (let n = 0; n < 50 && chunks.listenerCount(runId); n++) await new Promise(resolve => setTimeout(resolve, 20));
+    expect(chunks.listenerCount(runId)).toBe(0);
+  } finally { await db.close(); }
+});
