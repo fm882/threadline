@@ -56,6 +56,11 @@ export class Store {
         observed_at TIMESTAMPTZ NOT NULL, provider TEXT NOT NULL, representation TEXT NOT NULL
       );
       ALTER TABLE evidence_observations ADD COLUMN IF NOT EXISTS search_query_id TEXT REFERENCES search_queries(id);
+      CREATE TABLE IF NOT EXISTS history_snapshots (
+        id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id), owner_id TEXT NOT NULL,
+        local_date DATE NOT NULL, timezone TEXT NOT NULL, cutoff INTEGER NOT NULL,
+        status TEXT NOT NULL, total INTEGER NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
       CREATE TABLE IF NOT EXISTS answer_claims (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL, claim TEXT NOT NULL
       );
@@ -200,6 +205,35 @@ export class Store {
       ORDER BY m.created_at, m.ordinal LIMIT $6`, [owner, run.cutoff, date, run.timezone, after, limit + 1]);
     const messages = page.rows.slice(0, limit);
     return { date, timezone: run.timezone, total: count.rows[0].total, messages, next: page.rows.length > limit ? messages[messages.length - 1].ordinal : null };
+  }
+
+  async prepareDateRecall(owner: string, runId: string, date: string) {
+    const existing = await this.db.query<{ id: string; local_date: string }>('SELECT id, local_date::text FROM history_snapshots WHERE run_id = $1 AND owner_id = $2', [runId, owner]);
+    if (existing.rows.length) {
+      if (existing.rows[0].local_date !== date) throw new Conflict('Run already has a different history snapshot');
+      return existing.rows[0].id;
+    }
+    const run = await this.getRun(owner, runId);
+    if (run.status !== 'active') throw new Conflict('Run is no longer active');
+    const result = await this.questionsOnLocalDate(owner, runId, date, 0, 1);
+    const id = randomUUID();
+    const inserted = await this.db.query(`INSERT INTO history_snapshots (id, run_id, owner_id, local_date, timezone, cutoff, status, total)
+      SELECT $1, id, owner_id, $4, $5, $6, $7, $8 FROM runs WHERE id = $2 AND owner_id = $3 AND status = 'active'
+      ON CONFLICT (run_id) DO NOTHING RETURNING id`, [id, runId, owner, date, run.timezone, run.cutoff, result.total ? 'resolved' : 'no_match', result.total]);
+    if (inserted.rows.length) return id;
+    const concurrent = await this.db.query<{ id: string; local_date: string }>('SELECT id, local_date::text FROM history_snapshots WHERE run_id = $1 AND owner_id = $2', [runId, owner]);
+    if (concurrent.rows[0]?.local_date === date) return concurrent.rows[0].id;
+    throw new Conflict('Run is no longer active or has a different history snapshot');
+  }
+
+  async dateRecallSnapshot(owner: string, snapshotId: string, after = 0, limit = 50) {
+    const result = await this.db.query<{ run_id: string; local_date: string; status: string; total: number; timezone: string; cutoff: number }>(`SELECT run_id, local_date::text, status, total, timezone, cutoff FROM history_snapshots WHERE id = $1 AND owner_id = $2`, [snapshotId, owner]);
+    const snapshot = result.rows[0];
+    if (!snapshot) throw new NotFound('History snapshot not found');
+    const run = await this.getRun(owner, snapshot.run_id);
+    if (run.cutoff !== snapshot.cutoff || run.timezone !== snapshot.timezone) throw new Error('History snapshot context mismatch');
+    const page = await this.questionsOnLocalDate(owner, snapshot.run_id, snapshot.local_date, after, limit);
+    return { id: snapshotId, runId: snapshot.run_id, status: snapshot.status, coverage: page.total === snapshot.total ? 'complete' : 'incomplete', expectedTotal: snapshot.total, ...page };
   }
 
   async recordProgress(owner: string, runId: string, stage: 'searching' | 'reviewing') {

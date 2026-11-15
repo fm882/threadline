@@ -45,3 +45,29 @@ it('paginates chronologically with stable ties and rejects another owner cursor'
     expect(bobOrdinal).toBe(1);
   } finally { await db.close(); }
 });
+
+it('persists an owner-scoped recall snapshot with fixed cutoff and explicit no-match coverage', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const first = await store.admit('alice', conversation, 'one', 'original question');
+    await db.query("UPDATE messages SET created_at = '2025-05-01T12:00:00Z' WHERE turn_id = (SELECT turn_id FROM runs WHERE id = $1) AND role = 'user'", [first]);
+    await store.publish('alice', first, 'answer');
+    const run = await store.admit('alice', conversation, 'recall', 'recall');
+    const snapshot = await store.prepareDateRecall('alice', run, '2025-05-01');
+    expect(await store.prepareDateRecall('alice', run, '2025-05-01')).toBe(snapshot);
+    await expect(store.prepareDateRecall('alice', run, '2025-05-02')).rejects.toThrow('different history snapshot');
+    await expect(store.dateRecallSnapshot('bob', snapshot)).rejects.toBeInstanceOf(NotFound);
+    await store.publish('alice', run, 'done');
+    const later = await store.admit('alice', conversation, 'later', 'later question');
+    await db.query("UPDATE messages SET created_at = '2025-05-01T13:00:00Z' WHERE turn_id = (SELECT turn_id FROM runs WHERE id = $1) AND role = 'user'", [later]);
+    const page = await store.dateRecallSnapshot('alice', snapshot);
+    expect(page.status).toBe('resolved'); expect(page.coverage).toBe('complete');
+    expect(page.messages.map(message => message.content)).toEqual(['original question']);
+    await store.cancel('alice', later);
+    const emptyRun = await store.admit('alice', conversation, 'empty', 'recall');
+    const empty = await store.prepareDateRecall('alice', emptyRun, '2024-01-01');
+    expect((await store.dateRecallSnapshot('alice', empty)).status).toBe('no_match');
+  } finally { await db.close(); }
+});
