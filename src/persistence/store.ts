@@ -214,6 +214,20 @@ export class Store {
     });
   }
 
+  async cancel(owner: string, runId: string): Promise<string> {
+    return this.db.transaction(async tx => {
+      const result = await tx.query<{ turn_id: string; status: string }>('SELECT turn_id, status FROM runs WHERE id = $1 AND owner_id = $2', [runId, owner]);
+      const run = result.rows[0];
+      if (!run) throw new NotFound('Run not found');
+      if (run.status !== 'active') return run.status;
+      await tx.query("UPDATE runs SET status = 'cancelled' WHERE id = $1 AND owner_id = $2", [runId, owner]);
+      await tx.query("UPDATE turns SET status = 'cancelled' WHERE id = $1", [run.turn_id]);
+      await tx.query("UPDATE jobs SET status = 'cancelled' WHERE run_id = $1", [runId]);
+      await tx.query("INSERT INTO run_events (run_id, kind, data) VALUES ($1, 'cancelled', '{}')", [runId]);
+      return 'cancelled';
+    });
+  }
+
   async fail(owner: string, runId: string, message: string) {
     await this.db.transaction(async tx => {
       const result = await tx.query<{ turn_id: string }>("UPDATE runs SET status = 'failed', error = $3 WHERE id = $1 AND owner_id = $2 AND status = 'active' RETURNING turn_id", [runId, owner, message]);

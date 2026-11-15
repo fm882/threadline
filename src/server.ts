@@ -26,7 +26,7 @@ await store.initialize();
 const config = () => gatewayConfig(process.env);
 const searchCache = createSearchCache();
 const saver = SqliteSaver.fromConnString(join(dataDir, 'checkpoints.sqlite'));
-const runner = async (owner: string, run: string) => {
+const runner = async (owner: string, run: string, signal: AbortSignal) => {
   const current = config();
   const record = await store.getRun(owner, run);
   const searchKey = process.env.TAVILY_API_KEY;
@@ -36,7 +36,7 @@ const runner = async (owner: string, run: string) => {
       return searchCache.search(owner, query, record.verify_current || requiresCurrentVerification(input.content), tavilySearch(searchKey), signal);
     },
   }) : gatewayClient(current.base, current.key || 'unconfigured', current.model, record.verify_current);
-  await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run);
+  await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run, signal);
 };
 const app = createApp({ store, owner: () => 'local-development-user', ready: () => gatewayReadiness(config())(), run: runner });
 const port = Number(process.env.PORT || 3000);

@@ -33,12 +33,18 @@ export function gatewayClient(baseURL: string, apiKey: string, model: string, ve
   };
 }
 
-async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[], onChunk: (chunk: string) => void, timeoutMs: number) {
+async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[], onChunk: (chunk: string) => void, timeoutMs: number, externalSignal?: AbortSignal) {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const signal = externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal;
+  if (signal.aborted) throw new Error('Cancelled');
   try {
     return await Promise.race([
-      client(messages, chunk => { if (!controller.signal.aborted) onChunk(chunk); }, controller.signal),
+      client(messages, chunk => { if (!signal.aborted) onChunk(chunk); }, signal),
+      new Promise<never>((_, reject) => {
+        if (signal.aborted) reject(new Error('Cancelled'));
+        else signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true });
+      }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => { controller.abort(); reject(new Error('Deadline exceeded')); }, timeoutMs);
       }),
@@ -52,7 +58,7 @@ async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[],
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<ChatOutput>() });
 
 export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000) {
-  return async (owner: string, run: string) => {
+  return async (owner: string, run: string, signal?: AbortSignal) => {
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
     const trace = traceTurn(run, sink, new Date(record.created_at).getTime());
@@ -72,7 +78,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
       trace.stage('inference');
       const graph = new StateGraph(State)
-        .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), deadlineMs) }))
+        .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), deadlineMs, signal) }))
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
       if (await store.publish(owner, run, typeof output.answer === 'string' ? output.answer : output.answer.content, typeof output.answer === 'string' ? [] : output.answer.claims)) trace.stage('publication');

@@ -11,7 +11,7 @@ chunks.setMaxListeners(0);
 const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000), verifyCurrent: z.boolean().default(false) }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
-export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: (owner: string, id: string) => Promise<void> }) {
+export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: (owner: string, id: string, signal: AbortSignal) => Promise<void> }) {
   const { store, owner, ready, run } = options;
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -59,8 +59,9 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const id = await store.admit(identity, c.req.param('id'), key, parsed.data.input, parsed.data.verifyCurrent);
     // Identical retries may call the runner again; reserve execution in this process.
     if (!executing.has(id)) {
-      executing.add(id);
-      void Promise.resolve().then(() => run(identity, id))
+      const controller = new AbortController();
+      executing.set(id, controller);
+      void Promise.resolve().then(() => run(identity, id, controller.signal))
         .catch(async () => {
           // Never expose worker exceptions or provider details to the client.
           await store.fail(identity, id, 'The chat service failed or timed out. Check gateway configuration and try again.');
@@ -69,8 +70,14 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     }
     return c.json({ runId: id }, 202);
   });
-  const executing = new Set<string>();
+  const executing = new Map<string, AbortController>();
   app.get('/api/evidence/:id', async c => c.json(await store.evidence(owner(c.req.raw), c.req.param('id'))));
+  app.post('/api/runs/:id/cancel', async c => {
+    const id = c.req.param('id');
+    const status = await store.cancel(owner(c.req.raw), id);
+    if (status === 'cancelled') executing.get(id)?.abort();
+    return c.json({ status });
+  });
   app.get('/api/runs/:id', async c => c.json(await store.getRun(owner(c.req.raw), c.req.param('id'))));
   app.get('/api/runs/:id/events', async c => {
     const identity = owner(c.req.raw), id = c.req.param('id');
@@ -86,7 +93,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
         while (!stream.aborted) {
           const events = await store.events(identity, id, last);
           for (const event of events) {
-            if (event.kind === 'completed' || event.kind === 'failed') {
+            if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
               chunks.off(id, listener);
               while (pending.length) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ content: pending.shift() }) });
             }

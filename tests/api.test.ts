@@ -219,3 +219,35 @@ it('persists the explicit verification choice and includes it in idempotency', a
     expect((await submit(false)).status).toBe(409);
   } finally { await db.close(); }
 });
+
+it('cancels an active run once, aborts the worker and prevents late publication', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    let workerSignal!: AbortSignal;
+    const app = createApp({ store, owner: req => req.headers.get('x-fixture-owner') || 'alice', ready: () => null, run: async (_owner, _run, signal) => { workerSignal = signal; started(); await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); } });
+    const response = await app.request(`/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'cancel' }, body: JSON.stringify({ input: 'hello' }) });
+    const { runId } = await response.json(); await running;
+    expect((await app.request(`/api/runs/${runId}/cancel`, { method: 'POST', headers: { 'x-fixture-owner': 'bob' } })).status).toBe(404);
+    expect((await (await app.request(`/api/runs/${runId}/cancel`, { method: 'POST' })).json()).status).toBe('cancelled');
+    expect(workerSignal.aborted).toBe(true);
+    expect((await (await app.request(`/api/runs/${runId}/cancel`, { method: 'POST' })).json()).status).toBe('cancelled');
+    expect(await store.publish('alice', runId, 'late answer')).toBe(false);
+    expect((await store.events('alice', runId)).map(event => event.kind)).toEqual(['accepted', 'cancelled']);
+  } finally { await db.close(); }
+});
+
+it('returns completed when publication wins before cancellation', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'hello');
+    await store.publish('alice', run, 'done');
+    expect(await store.cancel('alice', run)).toBe('completed');
+    expect((await store.events('alice', run)).map(event => event.kind)).toEqual(['accepted', 'completed']);
+  } finally { await db.close(); }
+});
