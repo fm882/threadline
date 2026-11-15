@@ -192,3 +192,27 @@ it('discloses failed search without asking the model to fabricate a researched a
     expect(await store.publish('alice', runId, result.content, result.claims)).toBe(true);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('rejects a research draft with an absent or invalid claim classification', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'find details');
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    const request = JSON.parse(body); calls++;
+    const toolResult = request.messages.find((m: any) => m.role === 'tool');
+    const message = !toolResult ? { role: 'assistant', content: null, tool_calls: [{ id: `call_${calls}`, type: 'function', function: { name: 'web_search', arguments: '{"query":"details"}' } }] }
+      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'The tier starts at 12.', ...(calls === 2 ? {} : { kind: 'unknown' }), evidenceIds: [JSON.parse(toolResult.content)[0].id] }], uncertainty: '' }) };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: toolResult ? 'stop' : 'tool_calls' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, search: async () => [{ url: 'https://example.com/', title: 'Source', excerpt: 'Entry tier starts at 12.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    await expect(client([{ role: 'user', content: 'find details' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
+    await expect(client([{ role: 'user', content: 'find details' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
+    expect((await store.messages('alice', conversation))).toHaveLength(1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
