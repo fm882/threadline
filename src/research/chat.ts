@@ -6,7 +6,8 @@ import { Store } from '../persistence/store.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 
 export type ChatMessage = { role: string; content: string };
-export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => Promise<string>;
+export type ChatOutput = string | { content: string; claims: { claim: string; evidenceIds: string[] }[] };
+export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => Promise<ChatOutput>;
 
 // Character limit is deliberately conservative until model-specific token counting is introduced.
 export const MAX_CONTEXT_CHARS = 16_000;
@@ -44,7 +45,7 @@ async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[],
   }
 }
 
-const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<string>() });
+const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<ChatOutput>() });
 
 export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000) {
   return async (owner: string, run: string) => {
@@ -70,7 +71,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), deadlineMs) }))
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
-      if (await store.publish(owner, run, output.answer)) trace.stage('publication');
+      if (await store.publish(owner, run, typeof output.answer === 'string' ? output.answer : output.answer.content, typeof output.answer === 'string' ? [] : output.answer.claims)) trace.stage('publication');
     } catch {
       trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.

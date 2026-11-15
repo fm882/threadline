@@ -8,6 +8,7 @@ import { Store } from './persistence/store.js';
 import { createChatRunner, gatewayClient } from './research/chat.js';
 import { langsmithSink } from './telemetry/tracing.js';
 import { gatewayConfig, gatewayReadiness } from './inference/readiness.js';
+import { researchClient } from './research/research-client.js';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const tracing = process.env.LANGSMITH_TRACING === 'true' && process.env.LANGSMITH_API_KEY
@@ -23,7 +24,7 @@ const config = () => gatewayConfig(process.env);
 const saver = SqliteSaver.fromConnString(join(dataDir, 'checkpoints.sqlite'));
 const runner = async (owner: string, run: string) => {
   const current = config();
-  const client = gatewayClient(current.base, current.key || 'unconfigured', current.model);
+  const client = process.env.TAVILY_API_KEY ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey: process.env.TAVILY_API_KEY, store, owner, runId: run }) : gatewayClient(current.base, current.key || 'unconfigured', current.model);
   await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run);
 };
 const app = createApp({ store, owner: () => 'local-development-user', ready: () => gatewayReadiness(config())(), run: runner });
