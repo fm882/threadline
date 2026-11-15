@@ -36,3 +36,16 @@ it('detects a local gateway key created after the application starts', async () 
     expect(authorization).toBe('Bearer new-local-key');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+it('reports an unreadable local key as a safe configuration failure', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = await mkdtemp(join(tmpdir(), 'minmi-key-error-'));
+  try {
+    // Reading a directory as a file fails reliably without relying on user permissions.
+    const config = gatewayConfig({}, dir);
+    expect(config.error).toContain('Cannot read the local gateway key');
+    expect(await gatewayReadiness(config)()).toBe(config.error);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

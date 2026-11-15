@@ -8,14 +8,19 @@ export function gatewayConfig(env: NodeJS.ProcessEnv, keyPath = '.data/litellm.k
   const capabilities = loadCapabilities(env.MODEL_CAPABILITIES_PATH || 'config/model-capabilities.json', model);
   const local = url && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   let key = env.INFERENCE_API_KEY || '';
+  let keyError: string | null = null;
   if (!key && local) {
-    key = env.LITELLM_MASTER_KEY || (existsSync(keyPath) ? readFileSync(keyPath, 'utf8').trim() : '');
+    try {
+      key = env.LITELLM_MASTER_KEY || (existsSync(keyPath) ? readFileSync(keyPath, 'utf8').trim() : '');
+    } catch {
+      keyError = 'Cannot read the local gateway key. Check its permissions and restart the gateway if needed.';
+    }
   }
   const error = 'error' in capabilities ? capabilities.error ?? 'Invalid capability manifest.'
     : !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash
       ? 'Set a valid INFERENCE_BASE_URL without credentials or query parameters.'
       : !local && url.protocol !== 'https:' ? 'Remote inference requires an HTTPS endpoint.'
-      : !key ? 'Start the local gateway or set INFERENCE_API_KEY.' : null;
+      : keyError || (!key ? 'Start the local gateway or set INFERENCE_API_KEY.' : null);
   return { base: base.replace(/\/$/, ''), key, model, error };
 }
 
