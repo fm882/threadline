@@ -87,3 +87,24 @@ it('rejects citation markup smuggled into model-authored claim text', async () =
     expect((await store.messages('alice', conversation))).toHaveLength(1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('does not present an unsearched model answer as current verification', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'Is it current today?');
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume */ }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message: { role: 'assistant', content: 'It is definitely current.' }, finish_reason: 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId });
+    const result = await client([{ role: 'user', content: 'Is it current today?' }], () => {}, AbortSignal.timeout(5000));
+    expect(typeof result).toBe('object');
+    if (typeof result === 'string') throw new Error('Expected a limitation');
+    expect(result.content).toContain('could not verify current');
+    expect(result.content).not.toContain('definitely');
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
