@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Store } from '../persistence/store.js';
 import { tavilySearch, SearchUnavailable } from '../search/tavily.js';
 import type { ChatMessage } from './chat.js';
+import { qualifyPriceClaim } from '../answers/qualification.js';
 
 const tool = { type: 'function' as const, function: { name: 'web_search', description: 'Search the public web for current information when needed.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' } }, required: ['query'], additionalProperties: false } } };
 const querySchema = z.object({ query: z.string().trim().min(1).max(500) }).strict();
@@ -43,8 +44,9 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     if ([...answer.claims.map(claim => claim.claim), answer.uncertainty].some(text => /\[source:/i.test(text))) throw new Error('Citation markup must be generated from validated evidence');
     const allowed = new Set<string>(observations.map(item => item.id));
     if (answer.claims.some(claim => claim.evidenceIds.some(id => !allowed.has(id)))) throw new Error('Unregistered citation');
+    const qualifiedClaims = answer.claims.map(claim => ({ ...claim, claim: qualifyPriceClaim(claim.claim) }));
     const asOf = observations[0].observedAt;
-    const content = `As of ${asOf}:\n\n${answer.claims.map(claim => `${claim.claim} ${claim.evidenceIds.map(id => `[source:${id}]`).join(' ')}`).join('\n\n')}${answer.uncertainty ? `\n\n${answer.uncertainty}` : ''}`;
-    return { content, claims: answer.claims };
+    const content = `As of ${asOf}:\n\n${qualifiedClaims.map(claim => `${claim.claim} ${claim.evidenceIds.map(id => `[source:${id}]`).join(' ')}`).join('\n\n')}${answer.uncertainty ? `\n\n${answer.uncertainty}` : ''}`;
+    return { content, claims: qualifiedClaims };
   };
 }
