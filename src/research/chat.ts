@@ -14,10 +14,10 @@ export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => v
 export const MAX_CONTEXT_CHARS = 16_000;
 export const MAX_INPUT_CHARS = 8_000;
 
-export function gatewayClient(baseURL: string, apiKey: string, model: string): ChatClient {
+export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false): ChatClient {
   const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 55_000 });
   return async (messages, onChunk, signal) => {
-    if (requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
+    if (verifyCurrent || requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
       return 'Web search is not configured, so I cannot verify current information.';
     }
     const stream = await client.stream([new SystemMessage('Web search is unavailable. For questions requiring current or externally verified information, clearly say you cannot verify it rather than presenting an unverified current claim.'), ...messages.map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content))], { signal });

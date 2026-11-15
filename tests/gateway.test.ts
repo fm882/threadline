@@ -60,3 +60,8 @@ it('does not call the model for explicitly current questions when search is not 
     expect(calls).toBe(0);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+it('abstains when fresh verification is explicitly requested without search', async () => {
+  const client = gatewayClient('http://127.0.0.1:1/v1', 'test', 'chat-main-v1', true);
+  expect(await client([{ role: 'user', content: 'What about this?' }], () => {}, AbortSignal.timeout(1000))).toContain('cannot verify');
+});

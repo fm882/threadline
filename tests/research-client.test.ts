@@ -111,6 +111,9 @@ it('does not present an unsearched model answer as current verification', async 
     if (typeof result === 'string') throw new Error('Expected a limitation');
     expect(result.content).toContain('could not verify current');
     expect(result.content).not.toContain('definitely');
+    const explicit = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, verifyCurrent: true });
+    const neutral = await explicit([{ role: 'user', content: 'What about that?' }], () => {}, AbortSignal.timeout(5000));
+    expect(typeof neutral === 'object' && neutral.content).toContain('could not verify current');
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 

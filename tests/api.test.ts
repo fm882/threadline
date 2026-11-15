@@ -204,3 +204,18 @@ it('records a safe terminal failure if the worker rejects unexpectedly', async (
     expect(await store.admit('alice', conversation, 'two', 'try again')).toBeTruthy();
   } finally { await db.close(); }
 });
+
+it('persists the explicit verification choice and includes it in idempotency', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const submit = (verifyCurrent: boolean) => app.request(`/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'choice' }, body: JSON.stringify({ input: 'What about this?', verifyCurrent }) });
+    const response = await submit(true); expect(response.status).toBe(202);
+    const { runId } = await response.json();
+    expect((await store.getRun('alice', runId)).verify_current).toBe(true);
+    expect((await (await submit(true)).json()).runId).toBe(runId);
+    expect((await submit(false)).status).toBe(409);
+  } finally { await db.close(); }
+});

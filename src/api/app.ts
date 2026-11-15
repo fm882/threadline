@@ -8,7 +8,7 @@ import { MAX_INPUT_CHARS } from '../research/chat.js';
 
 export const chunks = new EventEmitter();
 chunks.setMaxListeners(0);
-const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000) }).strict();
+const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000), verifyCurrent: z.boolean().default(false) }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
 export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: (owner: string, id: string) => Promise<void> }) {
@@ -52,11 +52,11 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const parsed = bodySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: 'Input must be nonempty, at most 8000 characters and at most 16000 UTF-8 bytes' }, 400);
     const identity = owner(c.req.raw);
-    const existing = await store.existingAdmission(identity, c.req.param('id'), key, parsed.data.input);
+    const existing = await store.existingAdmission(identity, c.req.param('id'), key, parsed.data.input, parsed.data.verifyCurrent);
     if (existing) return c.json({ runId: existing }, 202);
     const problem = await ready();
     if (problem) return c.json({ error: problem }, 503);
-    const id = await store.admit(identity, c.req.param('id'), key, parsed.data.input);
+    const id = await store.admit(identity, c.req.param('id'), key, parsed.data.input, parsed.data.verifyCurrent);
     // Identical retries may call the runner again; reserve execution in this process.
     if (!executing.has(id)) {
       executing.add(id);

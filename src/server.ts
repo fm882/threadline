@@ -28,13 +28,14 @@ const searchCache = createSearchCache();
 const saver = SqliteSaver.fromConnString(join(dataDir, 'checkpoints.sqlite'));
 const runner = async (owner: string, run: string) => {
   const current = config();
+  const record = await store.getRun(owner, run);
   const searchKey = process.env.TAVILY_API_KEY;
-  const client = searchKey ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey, store, owner, runId: run,
+  const client = searchKey ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey, store, owner, runId: run, verifyCurrent: record.verify_current,
     search: async (query, signal) => {
       const { current: input } = await store.context(owner, run);
-      return searchCache.search(owner, query, requiresCurrentVerification(input.content), tavilySearch(searchKey), signal);
+      return searchCache.search(owner, query, record.verify_current || requiresCurrentVerification(input.content), tavilySearch(searchKey), signal);
     },
-  }) : gatewayClient(current.base, current.key || 'unconfigured', current.model);
+  }) : gatewayClient(current.base, current.key || 'unconfigured', current.model, record.verify_current);
   await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing)(owner, run);
 };
 const app = createApp({ store, owner: () => 'local-development-user', ready: () => gatewayReadiness(config())(), run: runner });
