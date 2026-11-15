@@ -17,3 +17,22 @@ describe('turn admission', () => {
     } finally { await db.close(); }
   });
 });
+
+it('persists atomic publication, a fixed cutoff, and owner-scoped history', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db);
+    await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'one', 'hello');
+    expect((await store.getRun('alice', run)).cutoff).toBe(0);
+    expect(await store.publish('alice', run, 'hi')).toBe(true);
+    expect(await store.publish('alice', run, 'duplicate')).toBe(false);
+    expect((await store.messages('alice', conversation)).map(m => m.content)).toEqual(['hello', 'hi']);
+    expect((await store.events('alice', run)).map(e => e.kind)).toEqual(['accepted', 'completed']);
+    await expect(store.messages('bob', conversation)).rejects.toBeInstanceOf(NotFound);
+    await expect(store.events('bob', run)).rejects.toBeInstanceOf(NotFound);
+    const next = await store.admit('alice', conversation, 'two', 'again');
+    expect((await store.getRun('alice', next)).cutoff).toBe(2);
+  } finally { await db.close(); }
+});
