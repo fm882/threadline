@@ -52,3 +52,22 @@ it('serializes concurrent admissions and prevents duplicate publication', async 
     expect(attempts.filter(result => result.status === 'rejected')).toHaveLength(1);
   } finally { await db.close(); }
 });
+
+it('keeps the admitted input outside its immutable historical cutoff', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const first = await store.admit('alice', conversation, 'first', 'one');
+    await expect(store.admit('alice', conversation, 'other', 'concurrent')).rejects.toBeInstanceOf(Conflict);
+    await store.publish('alice', first, 'answer one');
+    const second = await store.admit('alice', conversation, 'second', 'two');
+    await store.publish('alice', second, 'answer two');
+    const later = await store.admit('alice', conversation, 'third', 'three');
+    await store.publish('alice', later, 'answer three');
+    const snapshot = await store.context('alice', second);
+    expect(snapshot.current.content).toBe('two');
+    expect(snapshot.history.map(message => message.content)).toEqual(['one', 'answer one']);
+    expect((await store.getRun('alice', second)).cutoff).toBe(2);
+  } finally { await db.close(); }
+});

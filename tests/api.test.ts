@@ -96,3 +96,16 @@ it('rejects input exceeding the byte budget before admission', async () => {
     expect(await store.messages('alice', id)).toEqual([]);
   } finally { await db.close(); }
 });
+
+it('returns a conflict for another active turn', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    await store.admit('alice', conversation, 'first', 'in progress');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const response = await app.request(`/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'second' }, body: JSON.stringify({ input: 'another' }) });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toContain('active');
+  } finally { await db.close(); }
+});
