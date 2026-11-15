@@ -75,7 +75,7 @@ A user starts the local application, creates a conversation, sends ordinary chat
 
 - [ ] A clean local setup reaches a working browser chat through the required npm workflow after documented gateway prerequisites; missing configuration produces actionable readiness/UI errors rather than fabricated replies.
 - [ ] The actual application client completes a chat turn through the logical gateway model binding. Streaming and terminal state are observable; incompatible capabilities fail clearly.
-- [ ] Original input and final response survive a clean process restart and appear in an owned, paginated conversation history.
+- [x] Original input and final response survive a clean process restart and appear in an owned, paginated conversation history.
 - [x] Identical admission retries return the same turn; changed payloads under the same key conflict. Only one final answer is published.
 - [x] A second active turn in the same conversation receives an explicit conflict. Current input is separate from a fixed historical visibility cutoff.
 - [x] Wrong-owner conversation, message, run, and event access is rejected in multi-identity fixtures; identity cannot be selected by an untrusted request field.

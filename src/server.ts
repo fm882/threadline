@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server';
 import { PGlite } from '@electric-sql/pglite';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { createApp, chunks } from './api/app.js';
 import { Store } from './persistence/store.js';
 import { createChatRunner, gatewayClient } from './research/chat.js';
@@ -13,12 +14,13 @@ const tracing = process.env.LANGSMITH_TRACING === 'true' && process.env.LANGSMIT
   ? langsmithSink(process.env.LANGSMITH_API_KEY, process.env.LANGSMITH_PROJECT || 'minmi-local') : undefined;
 // Disable implicit framework tracing: it can export prompts and responses.
 for (const name of ['LANGSMITH_TRACING', 'LANGSMITH_TRACING_V2', 'LANGCHAIN_TRACING', 'LANGCHAIN_TRACING_V2', 'LANGCHAIN_VERBOSE']) process.env[name] = 'false';
-mkdirSync('.data', { recursive: true, mode: 0o700 });
-const db = new PGlite('.data/app-db');
+const dataDir = process.env.APP_DATA_DIR || '.data';
+mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+const db = new PGlite(join(dataDir, 'app-db'));
 const store = new Store(db);
 await store.initialize();
 const config = gatewayConfig(process.env);
-const saver = SqliteSaver.fromConnString('.data/checkpoints.sqlite');
+const saver = SqliteSaver.fromConnString(join(dataDir, 'checkpoints.sqlite'));
 const client = gatewayClient(config.base, config.key || 'unconfigured', config.model);
 const runner = createChatRunner(store, saver, client, (run, chunk) => chunks.emit(run, chunk), tracing);
 const app = createApp({ store, owner: () => 'local-development-user', ready: gatewayReadiness(config), run: runner });
