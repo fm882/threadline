@@ -108,3 +108,28 @@ it('does not present an unsearched model answer as current verification', async 
     expect(result.content).not.toContain('definitely');
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('routes ordinary chat without search and rejects malformed tool arguments', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'hello');
+  let requests = 0, searches = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume */ }
+    requests++;
+    const message = requests === 1 ? { role: 'assistant', content: 'Hello!' }
+      : { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"x","owner":"bob"}' } }] };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'stop' : 'tool_calls' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, search: async () => { searches++; return []; } });
+    const chunks: string[] = [];
+    expect(await client([{ role: 'user', content: 'hello' }], chunk => chunks.push(chunk), AbortSignal.timeout(5000))).toBe('Hello!');
+    expect(chunks).toEqual(['Hello!']);
+    await expect(client([{ role: 'user', content: 'find a source' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
+    expect(searches).toBe(0);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
