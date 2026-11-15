@@ -91,7 +91,10 @@ function App() {
     try {
       const result = await api<{ status: string }>(`/api/runs/${activeRun}/cancel`, { method: 'POST' });
       if (result.status === 'completed') setNotice('The response completed before it could be stopped.');
-      else if (result.status === 'cancelled') setNotice('Stopping the run…');
+      else if (result.status === 'cancelled') {
+        source.current?.close(); source.current = null; setBusy(false); setActiveRun(''); setStreamed(''); setError(''); setNotice('Run stopped.');
+        await history(conversation);
+      }
       else setNotice(`Run status: ${result.status}.`);
     } catch (e) { setError((e as Error).message); }
   }
