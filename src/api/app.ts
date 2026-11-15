@@ -84,28 +84,47 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const identity = owner(c.req.raw), id = c.req.param('id');
     const cursor = cursorSchema.safeParse(c.req.header('Last-Event-ID') ?? c.req.query('after'));
     if (!cursor.success) return c.json({ error: 'Invalid cursor' }, 400);
-    await store.getRun(identity, id);
+    const checkpoint = await store.eventCursor(identity, id, cursor.data);
     return streamSSE(c, async stream => {
-      let last = cursor.data;
+      let last = checkpoint.valid ? cursor.data : 0;
+      let terminalSeen = ['completed', 'failed', 'cancelled'].includes(checkpoint.kind || '');
       const pending: string[] = [];
-      const listener = (part: string) => { if (pending.length < 128) pending.push(part); };
+      let pendingBytes = 0;
+      const listener = (part: string) => {
+        const size = Buffer.byteLength(part);
+        if (pending.length < 128 && pendingBytes + size <= 32_768) { pending.push(part); pendingBytes += size; }
+      };
+      const drain = async () => {
+        while (pending.length) {
+          const part = pending.shift()!; pendingBytes -= Buffer.byteLength(part);
+          await stream.writeSSE({ event: 'delta', data: JSON.stringify({ content: part }) });
+        }
+      };
       chunks.on(id, listener);
       try {
+        if (!checkpoint.valid) await stream.writeSSE({ event: 'reset', data: JSON.stringify({ reason: 'cursor_unavailable' }) });
         while (!stream.aborted) {
           const events = await store.events(identity, id, last);
           for (const event of events) {
             if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
+              terminalSeen = true;
               chunks.off(id, listener);
-              while (pending.length) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ content: pending.shift() }) });
+              await drain();
             }
             last = event.id;
             await stream.writeSSE({ id: String(event.id), event: event.kind, data: event.data });
           }
-          while (pending.length) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ content: pending.shift() }) });
+          await drain();
           const state = await store.getRun(identity, id);
           // Publication may commit between reading events and reading state. Recheck
           // the durable log before closing so the terminal event is never skipped.
-          if (state.status !== 'active' && events.length < 100 && (await store.events(identity, id, last)).length === 0) break;
+          if (state.status !== 'active' && events.length < 100 && (await store.events(identity, id, last)).length === 0) {
+            if (!terminalSeen) {
+              const snapshot = await store.terminalSnapshot(identity, id);
+              if (snapshot) await stream.writeSSE({ event: snapshot.kind, data: snapshot.data });
+            }
+            break;
+          }
           await stream.sleep(250);
         }
       } finally { chunks.off(id, listener); }

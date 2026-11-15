@@ -190,6 +190,27 @@ export class Store {
     return result.rows[0];
   }
 
+  async eventCursor(owner: string, runId: string, cursor: number) {
+    await this.getRun(owner, runId);
+    if (!cursor) return { valid: true, kind: null as string | null };
+    const result = await this.db.query<{ kind: string }>('SELECT kind FROM run_events WHERE run_id = $1 AND id = $2', [runId, cursor]);
+    return { valid: result.rows.length > 0, kind: result.rows[0]?.kind ?? null };
+  }
+
+  async terminalSnapshot(owner: string, runId: string) {
+    const run = await this.getRun(owner, runId);
+    if (run.status === 'active') return null;
+    if (run.status === 'completed') {
+      const result = await this.db.query<{ content: string }>(`SELECT m.content FROM messages m JOIN runs r ON r.turn_id = m.turn_id
+        WHERE r.id = $1 AND r.owner_id = $2 AND m.owner_id = $2 AND m.role = 'assistant'`, [runId, owner]);
+      if (!result.rows.length) throw new Error('Completed run has no answer');
+      return { kind: 'completed', data: JSON.stringify({ content: result.rows[0].content }) };
+    }
+    if (run.status === 'failed') return { kind: 'failed', data: JSON.stringify({ message: run.error || 'The run failed.' }) };
+    if (run.status === 'cancelled') return { kind: 'cancelled', data: '{}' };
+    throw new Error('Unknown terminal status');
+  }
+
   async events(owner: string, id: string, after = 0) {
     await this.getRun(owner, id);
     return (await this.db.query<{ id: number; kind: string; data: string }>('SELECT id, kind, data FROM run_events WHERE run_id = $1 AND id > $2 ORDER BY id LIMIT 100', [id, after])).rows;

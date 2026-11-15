@@ -265,3 +265,47 @@ it('only exposes a conversation active run to its owner', async () => {
     expect((await (await app.request(`/api/conversations/${conversation}/active-run`)).json()).runId).toBeNull();
   } finally { await db.close(); }
 });
+
+it('resets unavailable cursors and recovers a pruned terminal result from canonical state', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'hello');
+    await store.publish('alice', run, 'canonical answer');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const original = await store.events('alice', run);
+    const replay = await (await app.request(`/api/runs/${run}/events?after=${original[0].id}`)).text();
+    expect(replay).not.toContain('event: accepted');
+    expect(replay).toContain('event: completed');
+    await db.query("DELETE FROM run_events WHERE run_id = $1 AND kind = 'completed'", [run]);
+    const reset = await (await app.request(`/api/runs/${run}/events?after=2147483647`)).text();
+    expect(reset).toContain('event: reset');
+    expect(reset).toContain('event: completed');
+    expect(reset).toContain('canonical answer');
+    expect(reset.match(/event: completed/g)).toHaveLength(1);
+    const afterAccepted = await (await app.request(`/api/runs/${run}/events?after=${original[0].id}`)).text();
+    expect(afterAccepted).toContain('canonical answer');
+  } finally { await db.close(); }
+});
+
+it('bounds buffered deltas while preserving the canonical final answer for a slow subscriber', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'key', 'hello');
+    const app = createApp({ store, owner: () => 'alice', ready: () => null, run: async () => {} });
+    const response = await app.request(`/api/runs/${run}/events`);
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    for (let i = 0; i < 2000; i++) chunks.emit(run, 'x'.repeat(4096));
+    await store.publish('alice', run, 'canonical final');
+    const parts: Uint8Array[] = first.value ? [first.value] : [];
+    while (true) { const part = await reader.read(); if (part.done) break; parts.push(part.value); }
+    const text = parts.map(part => new TextDecoder().decode(part)).join('');
+    expect(text.length).toBeLessThan(100_000);
+    expect(text).toContain('canonical final');
+    expect(text.match(/event: completed/g)).toHaveLength(1);
+  } finally { await db.close(); }
+});
