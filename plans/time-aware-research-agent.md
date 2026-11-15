@@ -141,13 +141,13 @@ A user asks what they said on a date and receives original questions, source con
 
 ### Acceptance criteria
 
-- [ ] Browser timezone initialization, editing, and visible UTC fallback affect subsequent date interpretation correctly.
-- [ ] Midnight boundaries and daylight-saving transitions return the right originals using half-open local-day windows.
-- [ ] Omitted years use the stated context-consistent past interpretation; materially ambiguous interpretations request clarification.
-- [ ] Historical relative dates are anchored to original message time, not the current run's time.
-- [ ] Hundreds of matching questions return stable chronological pages, counts, and continuation without vector top-k omissions; a summary cannot replace originals.
-- [ ] No match, failed retrieval, and incomplete coverage have distinct visible outcomes.
-- [ ] Later messages cannot enter the run's fixed baseline; wrong-owner originals and snapshots remain inaccessible.
+- [x] Browser timezone initialization, editing, and visible UTC fallback affect subsequent date interpretation correctly.
+- [x] Midnight boundaries and daylight-saving transitions return the right originals using half-open local-day windows.
+- [x] Omitted years use the stated context-consistent past interpretation; materially ambiguous interpretations request clarification.
+- [x] Historical relative dates are anchored to original message time, not the current run's time.
+- [x] Hundreds of matching questions return stable chronological pages, counts, and continuation without vector top-k omissions; a summary cannot replace originals.
+- [x] No match, failed retrieval, and incomplete coverage have distinct visible outcomes.
+- [x] Later messages cannot enter the run's fixed baseline; wrong-owner originals and snapshots remain inaccessible.
 
 ---
 
