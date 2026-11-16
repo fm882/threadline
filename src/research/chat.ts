@@ -2,7 +2,8 @@ import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { Store } from '../persistence/store.js';
+import { Store, type ComparisonClaim } from '../persistence/store.js';
+import type { HistoryRetriever } from '../history/index.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 import { requiresCurrentVerification } from './freshness.js';
 import { prepareExactRecall } from '../history/recall.js';
@@ -10,7 +11,7 @@ import { historicalContextPrompt, prepareHistoricalContext } from '../history/co
 import { z } from 'zod';
 
 export type ChatMessage = { role: string; content: string };
-export type ChatOutput = string | { content: string; claims: { claim: string; evidenceIds: string[] }[] };
+export type ChatOutput = string | { content: string; claims: { claim: string; evidenceIds: string[] }[]; comparisons?: ComparisonClaim[] };
 export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => Promise<ChatOutput>;
 
 // Character limit is deliberately conservative until model-specific token counting is introduced.
@@ -63,7 +64,7 @@ async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[],
 
 const checkpointAnswerSchema = z.union([
   z.string().min(1).max(32_000),
-  z.object({ content: z.string().min(1).max(50_000), claims: z.array(z.object({ claim: z.string().min(1).max(5000), evidenceIds: z.array(z.string().uuid()).min(1).max(5) })).max(10) }),
+  z.object({ content: z.string().min(1).max(50_000), claims: z.array(z.object({ claim: z.string().min(1).max(5000), evidenceIds: z.array(z.string().uuid()).min(1).max(5) })).max(10), comparisons: z.array(z.any()).max(10).optional() }),
 ]);
 
 export async function checkpointAnswer(checkpointer: SqliteSaver, runId: string): Promise<ChatOutput | null> {
@@ -74,7 +75,7 @@ export async function checkpointAnswer(checkpointer: SqliteSaver, runId: string)
 
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<ChatOutput>() });
 
-export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000) {
+export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000, retrieve?: HistoryRetriever) {
   return async (owner: string, run: string, signal?: AbortSignal) => {
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
@@ -83,7 +84,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       const saved = await checkpointAnswer(checkpointer, run);
       if (saved !== null) {
         signal?.throwIfAborted();
-        if (await store.publish(owner, run, typeof saved === 'string' ? saved : saved.content, typeof saved === 'string' ? [] : saved.claims)) trace.stage('publication');
+        if (await store.publish(owner, run, typeof saved === 'string' ? saved : saved.content, typeof saved === 'string' ? [] : saved.claims, typeof saved === 'string' ? [] : saved.comparisons || [])) trace.stage('publication');
         return;
       }
       const { current, history: prior } = await store.context(owner, run);
@@ -94,7 +95,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         return;
       }
       const continuity = prior.slice(-8).map(message => message.content).join('\n').slice(-8_000);
-      const reference = await prepareHistoricalContext(store, owner, run, current.content, new Date(record.created_at), record.timezone, continuity);
+      const reference = await prepareHistoricalContext(store, owner, run, current.content, new Date(record.created_at), record.timezone, continuity, retrieve);
       if (reference.kind === 'clarification_needed') {
         signal?.throwIfAborted();
         if (await store.publish(owner, run, `${reference.question}\n[reference:${reference.snapshotId}]`)) trace.stage('publication');
@@ -124,11 +125,12 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       if (reference.kind === 'resolved') {
         const snapshot = await store.referenceSnapshot(owner, reference.snapshotId);
         const source = snapshot.items[0];
-        if (snapshot.coverage !== 'complete' || !source) {
+        if (!source) {
           if (await store.publish(owner, run, 'I could not verify the original discussion in the retained history, so I cannot use it. Please try again.')) trace.stage('publication');
           return;
         }
-        const context = historicalContextPrompt({ ...source, score: 0 }, reference.coverage, reference.discussionDate, reference.comparisonDate);
+        const coverage = snapshot.coverage === 'complete' && reference.coverage === 'complete' ? 'complete' : 'incomplete';
+        const context = historicalContextPrompt({ ...source, score: 0 }, coverage, reference.discussionDate, reference.comparisonDate);
         selected.push({ role: 'system', content: context });
         size += Buffer.byteLength(context);
         referenceSnapshotId = reference.snapshotId;
@@ -148,7 +150,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       signal?.throwIfAborted();
       const answer = typeof output.answer === 'string' ? output.answer : output.answer.content;
       const published = referenceSnapshotId ? `${answer}\n[reference:${referenceSnapshotId}]` : answer;
-      if (await store.publish(owner, run, published, typeof output.answer === 'string' ? [] : output.answer.claims)) trace.stage('publication');
+      if (await store.publish(owner, run, published, typeof output.answer === 'string' ? [] : output.answer.claims, typeof output.answer === 'string' ? [] : output.answer.comparisons || [])) trace.stage('publication');
     } catch {
       trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.

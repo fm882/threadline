@@ -11,9 +11,10 @@ export const chunks = new EventEmitter();
 chunks.setMaxListeners(0);
 const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000), verifyCurrent: z.boolean().default(false) }).strict();
 const timezoneSchema = z.object({ timezone: z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }), initialize: z.boolean().default(false), fallback: z.boolean().default(false) }).strict().refine(value => !value.fallback || (value.initialize && value.timezone === 'UTC'));
+const recallSchema = z.object({ recallEligible: z.boolean() }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
 
-export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: RunWorker; dispatcher?: Dispatcher }) {
+export function createApp(options: { store: Store; owner: (request: Request) => string; ready: () => string | null | Promise<string | null>; run: RunWorker; dispatcher?: Dispatcher; clearCheckpoints?: (runIds: string[]) => Promise<void> }) {
   const { store, owner, ready, run } = options;
   const dispatcher = options.dispatcher || createDispatcher(store, run);
   const app = new Hono();
@@ -45,10 +46,29 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     return c.json({ conversations: await store.listConversations(owner(c.req.raw), 50, offset.data) });
   });
   app.patch('/api/conversations/:id', async c => {
-    const parsed = timezoneSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: 'Provide a valid IANA timezone.' }, 400);
+    const body = await c.req.json().catch(() => null);
+    const recall = recallSchema.safeParse(body);
+    if (recall.success) return c.json(await store.setRecallEligibility(owner(c.req.raw), c.req.param('id'), recall.data.recallEligible));
+    const parsed = timezoneSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: 'Provide a valid timezone or recall preference.' }, 400);
     const { timezone, initialize, fallback } = parsed.data;
     return c.json(await store.setTimezone(owner(c.req.raw), c.req.param('id'), timezone, initialize ? (fallback ? 'fallback' : 'browser') : 'user', initialize));
+  });
+  app.delete('/api/conversations/:id', async c => {
+    const identity = owner(c.req.raw), id = c.req.param('id');
+    const activeRuns = await store.deleteConversation(identity, id);
+    for (const runId of activeRuns) dispatcher.abort(runId);
+    try { await store.cleanupDeletedConversations(20, options.clearCheckpoints); }
+    catch { return c.json({ status: 'deleted', cleanup: 'pending' }, 202); }
+    return c.json({ status: 'deleted' });
+  });
+  app.get('/api/indexing/generations', c => { owner(c.req.raw); return store.listEmbeddingGenerations().then(generations => c.json({ generations })); });
+  app.post('/api/indexing/generations/:spaceId/:generation/activate', async c => {
+    owner(c.req.raw);
+    const generation = z.coerce.number().int().min(1).safeParse(c.req.param('generation'));
+    if (!generation.success) return c.json({ error: 'Invalid embedding generation.' }, 400);
+    await store.activateEmbeddingGeneration(c.req.param('spaceId'), generation.data);
+    return c.json({ status: 'active', spaceId: c.req.param('spaceId'), generation: generation.data });
   });
   app.get('/api/conversations/:id/active-run', async c => c.json({ runId: await store.activeRun(owner(c.req.raw), c.req.param('id')) }));
   app.get('/api/conversations/:id/messages', async c => {
