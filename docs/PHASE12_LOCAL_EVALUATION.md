@@ -1,6 +1,6 @@
 # Phase 12 local load evaluation
 
-Run: `npm run evaluate:local-load` on 2026-11-16. This is one local synthetic run, not a hosted capacity claim. The process-recovery fixture ran concurrently while the primary workload's 100 SSE clients were attached and 10 turns were held at the dispatcher gate; its service used an independent file-backed store and local gateway fixture.
+Runs: `npm run evaluate:local-load` on 2026-11-16. These are four local synthetic runs, not a hosted capacity claim. The process-recovery fixture ran concurrently while the primary workload's 100 SSE clients were attached and 10 turns were held at the dispatcher gate; its service used an independent file-backed store and local gateway fixture.
 
 ## Workload and machine
 
@@ -14,17 +14,18 @@ Run: `npm run evaluate:local-load` on 2026-11-16. This is one local synthetic ru
 
 Milliseconds, measured from each API admission or run start; completion percentiles include the nine successful runs only.
 
-| Measure | p50 | p95 | Samples |
+| Run | Admission p50 / p95 (10) | First answer p50 / p95 (9) | Successful completion p50 / p95 (9) |
 | --- | ---: | ---: | ---: |
-| Admission acknowledgement | 56.10 | 67.70 | 10 |
-| First streamed answer | 4,320.41 | 4,814.26 | 9 |
-| Successful completion | 6,120.85 | 6,325.56 | 9 |
+| Initial recorded run | 56.10 / 67.70 | 4,320.41 / 4,814.26 | 6,120.85 / 6,325.56 |
+| Repeat 1 | 56.92 / 67.01 | 4,333.78 / 4,780.17 | 6,035.89 / 6,248.13 |
+| Repeat 2 | 57.04 / 65.94 | 4,311.71 / 4,702.72 | 6,027.98 / 6,268.89 |
+| Repeat 3 | 56.53 / 71.05 | 4,398.88 / 4,770.82 | 6,330.73 / 6,543.92 |
 
-The reconnect burst completed in 477.23 ms; initial worker wall time after release was 1,594.29 ms. The crash-fixture startup/recovery overlapped the active primary run window, so answer latency includes this local interference and should not be compared directly with the earlier no-crash sample. These timings do not estimate model quality, provider cost, network latency, or multi-process capacity.
+Across the four runs, p95 ranges were 65.94–71.05 ms for admission, 4,702.72–4,814.26 ms for first answer, and 6,248.13–6,543.92 ms for successful completion. A provisional local-only regression tripwire is 86 ms, 5,780 ms, and 7,860 ms respectively (the rounded-up worst observed p95 plus 20%). This is a smoke threshold for this exact synthetic workload and machine, not an SLO or cross-machine guarantee. The crash-fixture startup/recovery overlaps the measured workload and adds interference; re-baseline if the fixture, runtime, or hardware changes. These timings do not estimate model quality, provider cost, network latency, or multi-process capacity.
 
 ## Coverage limits
 
-Slow-consumer delivery, reconnect replay, concurrent indexing, a dependency failure, and a hard process crash/restart are covered during this local evaluation. The crash/restart uses a separate file-backed app store and gateway; it does not kill the server handling the 100-client workload or test shared-database multi-process contention. This is one synthetic observation, not a regression threshold; numeric gates require a reviewed repeatable baseline and a separate bounded live-provider evaluation.
+Slow-consumer delivery, reconnect replay, concurrent indexing, a dependency failure, and a hard process crash/restart are covered during these local evaluations. The crash/restart uses a separate file-backed app store and gateway; it does not kill the server handling the 100-client workload or test shared-database multi-process contention. All four samples passed harness acceptance: 100 initial clients, 100 reconnects, 9 successful runs, 1 injected outage, zero connection errors, 259 indexed messages, zero pending backlog, slow-consumer completion, and one recovered logical answer. The deterministic browser quality gate is 3/3 assignment scenarios passing, including all five CRM shortlist subjects with current fixture citations and explicit unsupported-history handling. Fixture prices and provider quality remain unevaluated live. A provider cost gate remains unset because no live batch usage or charge has been measured; agree a spend cap before running that batch.
 
 ## Assignment browser scenarios
 
