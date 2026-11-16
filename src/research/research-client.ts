@@ -277,6 +277,10 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
         record.comparisons = record.comparisons.map(value => {
           if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
           const comparison = value as Record<string, unknown>;
+          if (comparison.baselineOrigin === 'user_reported' && hasHistoricalContext && !userReportedQuote) {
+            comparison.baselineOrigin = 'unsupported';
+            delete comparison.userQuote;
+          }
           if (typeof comparison.subject === 'string' && requiredSubjects.length) {
             const alias = comparison.subject.trim().toLocaleLowerCase();
             const anchor = subjectAnchor(alias);
