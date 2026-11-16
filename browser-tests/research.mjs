@@ -333,7 +333,8 @@ try {
   if (liveAssignmentMode) {
     const runsPath = join(scenariosDir, 'live-evaluation-runs.json');
     const runs = existsSync(runsPath) ? JSON.parse(readFileSync(runsPath, 'utf8')) : [];
-    const report = { checkedAt: new Date().toISOString(), harnessCompleted: runs.length === 3 && liveModelUsage.length <= 12, providerExecution: runs.length === 3 && runs.every(run => run.status === 'completed') ? 'all_scenarios_completed' : 'provider_or_application_failures_present', researchQuality: 'pending_human_grounded_rubric', monetaryCost: 'unknown_pending_provider_usage_reconciliation', error: liveFailure || undefined, modelRequests: liveModelUsage, runs, scenarios: liveScenarioResults.map(result => ({ ...result, budget: runs.find(run => run.runId === result.runId) || null })) };
+    const allScenariosPublishedWithCitations = runs.length === 3 && runs.every(run => run.status === 'completed' && run.answerLength > 0 && run.citationCount > 0);
+    const report = { checkedAt: new Date().toISOString(), harnessCompleted: runs.length === 3 && liveModelUsage.length <= 12, providerExecution: allScenariosPublishedWithCitations ? 'all_scenarios_completed' : 'provider_or_application_failures_present', researchQuality: 'pending_human_grounded_rubric', monetaryCost: 'unknown_pending_provider_usage_reconciliation', error: liveFailure || undefined, modelRequests: liveModelUsage, runs, scenarios: liveScenarioResults.map(result => ({ ...result, budget: runs.find(run => run.runId === result.runId) || null })) };
     const reportDir = join(root, '.data'); mkdirSync(reportDir, { recursive: true, mode: 0o700 });
     if (liveScenarioResults.length < 3) writeFileSync(join(reportDir, `live-research-partial-${Date.now()}.json`), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   }
