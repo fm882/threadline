@@ -22,15 +22,21 @@ const historyRetriever = createHybridHistoryRetriever(store, space, { embed: asy
 const saver = SqliteSaver.fromConnString(join(dir, 'checkpoints.sqlite'));
 const run = async (owner: string, runId: string) => {
   const record = await store.getRun(owner, runId);
+  const input = await store.runInput(owner, runId);
+  if (record.parent_run_id) {
+    await createChatRunner(store, saver, async () => 'Continuation completed with a fresh time limit.', (id, chunk) => chunks.emit(id, chunk))(owner, runId);
+    return;
+  }
   const client = researchClient({ baseURL: process.env.INFERENCE_BASE_URL!, apiKey: 'fixture', model: 'chat-main-v1', searchKey: 'fixture', owner, runId, store, verifyCurrent: record.verify_current,
     search: async () => [{ url: 'https://example.com/', title: 'Acme Basic official pricing', excerpt: 'Acme Basic plan is USD 12 per seat monthly for US customers, before tax. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', observedAt: new Date().toISOString(), provider: 'tavily', representation: 'search_snippet' }] });
   const scriptedClient = async (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => {
     const historyContext = messages.find(message => message.role === 'system' && message.content.includes('Authorized historical context'));
     const userMessage = messages.filter(message => message.role === 'user').at(-1)?.content || '';
+    if (userMessage.includes('[deadline fixture]')) return new Promise<string>(() => {});
     if (historyContext && /customer relationship/i.test(userMessage)) { signal.throwIfAborted(); const answer = 'We previously compared Acme CRM and Northstar CRM for the nonprofit.'; onChunk(answer); return answer; }
     return client(messages, onChunk, signal);
   };
-  await createChatRunner(store, saver, scriptedClient, (id, chunk) => chunks.emit(id, chunk), undefined, 60_000, historyRetriever)(owner, runId);
+  await createChatRunner(store, saver, scriptedClient, (id, chunk) => chunks.emit(id, chunk), undefined, input.includes('[deadline fixture]') ? 20 : 60_000, historyRetriever)(owner, runId);
 };
 const app = createApp({ store, owner: () => 'local-development-user', ready: () => null, run });
 const server = serve({ fetch: app.fetch, port: Number(process.env.PORT || 3000), hostname: '127.0.0.1' });

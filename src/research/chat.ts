@@ -18,7 +18,7 @@ export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => v
 export const MAX_INPUT_CHARS = 8_000;
 
 export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false): ChatClient {
-  const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 55_000 });
+  const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 65_000 });
   return async (messages, onChunk, signal) => {
     if (verifyCurrent || requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
       return 'Web search is not configured, so I cannot verify current information.';
@@ -52,7 +52,7 @@ async function invokeWithinDeadline(client: ChatClient, messages: ChatMessage[],
         else signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true });
       }),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(new Error('Deadline exceeded')); }, timeoutMs);
+        timer = setTimeout(() => { reject(new Error('Deadline exceeded')); controller.abort(); }, timeoutMs);
       }),
     ]);
   } finally {
@@ -156,14 +156,15 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       const published = referenceSnapshotId ? `${answer}\n[reference:${referenceSnapshotId}]` : answer;
       if (await store.publish(owner, run, published, typeof output.answer === 'string' ? [] : output.answer.claims, typeof output.answer === 'string' ? [] : output.answer.comparisons || [])) trace.stage('publication');
     } catch (error) {
-      trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.
       if (!signal?.aborted) {
         if (error instanceof ContextBudgetError) {
           if (await store.publish(owner, run, 'The requested history and instructions exceed the configured context limit. Narrow the topic or date so I can keep the original evidence and answer safely.')) trace.stage('publication');
+        } else if (error instanceof Error && error.message === 'Deadline exceeded') {
+          if (await store.publishIncomplete(owner, run, 'Research reached its time limit before a verified answer was ready. No supported partial findings are available yet. Continue research with a fresh time limit, or narrow the question.')) trace.stage('incomplete');
         }
-        else await store.fail(owner, run, 'The chat service failed or timed out. Check gateway configuration and try again.');
+        else { trace.stage('failure'); await store.fail(owner, run, 'The research provider failed before a verified answer was ready. Check gateway and search configuration, then retry.'); }
       }
-    } finally { trace.finish(); }
+    } finally { if (signal?.aborted) trace.stage('cancelled'); trace.finish(); }
   };
 }

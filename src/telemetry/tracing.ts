@@ -1,6 +1,6 @@
 import { Client, type ClientConfig } from 'langsmith';
 
-type Stage = 'admission' | 'inference' | 'publication' | 'failure' | 'compaction' | 'incomplete_coverage' | 'history_coverage_complete';
+type Stage = 'admission' | 'inference' | 'publication' | 'failure' | 'incomplete' | 'cancelled' | 'compaction' | 'incomplete_coverage' | 'history_coverage_complete';
 export type TraceDecision = { name: string; values: Record<string, number | boolean> };
 export type TraceRecord = { id: string; start: number; end: number; stages: { name: Stage; at: number }[]; decisions?: TraceDecision[] };
 export type TraceSink = (record: TraceRecord) => Promise<void>;

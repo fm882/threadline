@@ -104,7 +104,7 @@ export function qualifyComparison(comparison: ResearchComparison, cited: { title
 }
 
 export function researchClient(config: { baseURL: string; apiKey: string; model: string; searchKey: string; store: Store; owner: string; runId: string; search?: ReturnType<typeof tavilySearch>; now?: () => Date; verifyCurrent?: boolean; contextTokens?: number }) {
-  const model = new ChatOpenAI({ model: config.model, apiKey: config.apiKey, configuration: { baseURL: config.baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 55_000 });
+  const model = new ChatOpenAI({ model: config.model, apiKey: config.apiKey, configuration: { baseURL: config.baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 65_000 });
   const search = config.search || tavilySearch(config.searchKey);
   return async (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal): Promise<string | ResearchAnswer> => {
     const hasHistoricalContext = messages.some(message => message.role === 'system' && message.content.startsWith('Authorized historical context'));

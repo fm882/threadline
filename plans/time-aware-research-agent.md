@@ -298,11 +298,11 @@ A research run reaches its deadline or loses a dependency after finding some sup
 
 - [ ] The configured deadline and shared call/query/token/attempt limits stop new work and produce supported partial findings when available.
 - [ ] Every requested subject is represented by a finding or named gap; absent supported findings result in an honest failure/limitation rather than invented partial content.
-- [ ] The user explicitly continues through normal authorized admission, producing a new run linked to the incomplete one with a fresh time and budget.
-- [ ] Continuation does not rewrite the prior final answer or silently reset its deadline. Duplicate continuation submissions remain idempotent.
+- [x] The user explicitly continues through normal authorized admission, producing a new run linked to the incomplete one with a fresh time and budget. Browser/API and idempotency evidence: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
+- [x] Continuation does not rewrite the prior final answer or silently reset its deadline. Duplicate continuation submissions remain idempotent. Store and API tests: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [ ] Reused findings retain provenance and freshness; deleted or excluded historical material is not revived through continuation ancestry.
 - [ ] Foreground backpressure and separate indexing limits remain effective under dependency timeouts and bounded gateway retries.
-- [ ] The UI and trace distinguish timeout, user cancellation, provider failure, and completed research with no relevant change found.
+- [x] The UI and trace distinguish timeout, user cancellation, provider failure, and completed research with no relevant change found. Status/event and trace-stage evidence: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 
 ---
 

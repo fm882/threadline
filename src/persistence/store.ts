@@ -10,10 +10,10 @@ export type VectorReferenceCandidate = ReferenceCandidate & { similarity: number
 export class Conflict extends Error {}
 export class NotFound extends Error {}
 
-const payloadHash = (input: string, verifyCurrent = false) => createHash('sha256').update(JSON.stringify(verifyCurrent ? { input, verifyCurrent } : { input })).digest('hex');
+const payloadHash = (input: string, verifyCurrent = false, continuationOf: string | null = null) => createHash('sha256').update(JSON.stringify(continuationOf ? { input, verifyCurrent, continuationOf } : verifyCurrent ? { input, verifyCurrent } : { input })).digest('hex');
 
-type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date; verify_current: boolean; timezone: string };
-type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date; citation_ids?: string[]; recall_snapshot_id?: string | null; reference_snapshot_id?: string | null; reference_coverage?: 'complete' | 'incomplete' | null };
+type Run = { id: string; conversation_id: string; status: string; cutoff: number; error: string | null; created_at: Date; verify_current: boolean; timezone: string; parent_run_id: string | null };
+type Message = { id: string; role: string; content: string; ordinal: number; created_at: Date; run_id?: string | null; run_status?: string | null; citation_ids?: string[]; recall_snapshot_id?: string | null; reference_snapshot_id?: string | null; reference_coverage?: 'complete' | 'incomplete' | null };
 export type ReferenceCandidate = { id: string; conversation_id: string; conversation_title: string; content: string; answer: string; answer_id: string | null; answer_ordinal: number | null; answer_created_at: Date | null; ordinal: number; created_at: Date; score: number };
 export type HistoricalClaimEvidence = { claim: string; evidence: { id: string; title: string; url: string; excerpt: string; observed_at: Date }[] };
 export type HistoricalCorrection = { id: string; correction: string; created_at: Date };
@@ -79,9 +79,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY, turn_id TEXT NOT NULL UNIQUE REFERENCES turns(id),
         conversation_id TEXT NOT NULL REFERENCES conversations(id), owner_id TEXT NOT NULL,
-        status TEXT NOT NULL, cutoff INTEGER NOT NULL, error TEXT,
+        status TEXT NOT NULL, cutoff INTEGER NOT NULL, error TEXT, parent_run_id TEXT REFERENCES runs(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT REFERENCES runs(id);
       ALTER TABLE runs ADD COLUMN IF NOT EXISTS verify_current BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE runs ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
       CREATE TABLE IF NOT EXISTS jobs (
@@ -422,17 +423,17 @@ export class Store {
     return queued.rows.length;
   }
 
-  async existingAdmission(owner: string, conversation: string, key: string, input: string, verifyCurrent = false) {
+  async existingAdmission(owner: string, conversation: string, key: string, input: string, verifyCurrent = false, continuationOf: string | null = null) {
     const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL', [conversation, owner]);
     if (!owned.rows.length) throw new NotFound('Conversation not found');
     const result = await this.db.query<{ id: string; payload_hash: string }>('SELECT runs.id, turns.payload_hash FROM turns JOIN runs ON runs.turn_id = turns.id WHERE turns.conversation_id = $1 AND turns.idempotency_key = $2', [conversation, key]);
     if (!result.rows.length) return null;
-    if (result.rows[0].payload_hash !== payloadHash(input, verifyCurrent)) throw new Conflict('Idempotency key reused with different input');
+    if (result.rows[0].payload_hash !== payloadHash(input, verifyCurrent, continuationOf)) throw new Conflict('Idempotency key reused with different input');
     return result.rows[0].id;
   }
 
-  async admit(owner: string, conversation: string, key: string, input: string, verifyCurrent = false) {
-    const hash = payloadHash(input, verifyCurrent);
+  async admit(owner: string, conversation: string, key: string, input: string, verifyCurrent = false, continuationOf: string | null = null) {
+    const hash = payloadHash(input, verifyCurrent, continuationOf);
     return this.db.transaction(async tx => {
       const owned = await tx.query<{ id: string; timezone: string }>('SELECT id, timezone FROM conversations WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL', [conversation, owner]);
       if (!owned.rows.length) throw new NotFound('Conversation not found');
@@ -440,6 +441,15 @@ export class Store {
       if (existing.rows.length) {
         if (existing.rows[0].payload_hash !== hash) throw new Conflict('Idempotency key reused with different input');
         return existing.rows[0].id;
+      }
+      if (continuationOf) {
+        const parent = await tx.query<{ id: string }>(`SELECT p.id FROM runs p JOIN conversations pc ON pc.id = p.conversation_id AND pc.owner_id = p.owner_id
+          WHERE p.id = $1 AND p.owner_id = $2 AND p.conversation_id = $3 AND p.status = 'incomplete' AND pc.deleted_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM reference_snapshots rs JOIN reference_snapshot_items i ON i.snapshot_id = rs.id JOIN conversations sc ON sc.id = i.conversation_id
+              WHERE rs.run_id = p.id AND (rs.revoked = true OR sc.deleted_at IS NOT NULL OR (sc.id <> p.conversation_id AND sc.recall_eligible = false)))
+            AND NOT EXISTS (SELECT 1 FROM history_snapshots hs JOIN history_snapshot_items i ON i.snapshot_id = hs.id JOIN conversations sc ON sc.id = i.conversation_id
+              WHERE hs.run_id = p.id AND (hs.revoked = true OR sc.deleted_at IS NOT NULL OR (sc.id <> p.conversation_id AND sc.recall_eligible = false)))`, [continuationOf, owner, conversation]);
+        if (!parent.rows.length) throw new Conflict('Only an eligible incomplete run in this conversation can be continued');
       }
       const active = await tx.query("SELECT id FROM turns WHERE conversation_id = $1 AND status = 'active'", [conversation]);
       if (active.rows.length) throw new Conflict('Conversation already has an active turn');
@@ -450,7 +460,7 @@ export class Store {
       await tx.query("INSERT INTO turns (id, conversation_id, owner_id, idempotency_key, payload_hash, input, status) VALUES ($1, $2, $3, $4, $5, $6, 'active')", [turn, conversation, owner, key, hash, input]);
       await tx.query("INSERT INTO messages (id, conversation_id, owner_id, turn_id, role, content, ordinal) VALUES ($1, $2, $3, $4, 'user', $5, $6)", [randomUUID(), conversation, owner, turn, input, ordinal]);
       await tx.query("UPDATE conversations SET title = LEFT(regexp_replace($3, '\\s+', ' ', 'g'), 72) WHERE id = $1 AND owner_id = $2 AND title = 'Conversation'", [conversation, owner, input.trim()]);
-      await tx.query("INSERT INTO runs (id, turn_id, conversation_id, owner_id, status, cutoff, verify_current, timezone) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7)", [run, turn, conversation, owner, ordinal - 1, verifyCurrent, owned.rows[0].timezone]);
+      await tx.query("INSERT INTO runs (id, turn_id, conversation_id, owner_id, status, cutoff, verify_current, timezone, parent_run_id) VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8)", [run, turn, conversation, owner, ordinal - 1, verifyCurrent, owned.rows[0].timezone, continuationOf]);
       await tx.query("INSERT INTO jobs (run_id, status) VALUES ($1, 'pending')", [run]);
       await tx.query("INSERT INTO run_events (run_id, kind, data) VALUES ($1, 'accepted', '{}')", [run]);
       return run;
@@ -458,9 +468,15 @@ export class Store {
   }
 
   async getRun(owner: string, id: string): Promise<Run> {
-    const result = await this.db.query<Run>('SELECT r.id, r.conversation_id, r.status, r.cutoff, r.error, r.created_at, r.verify_current, r.timezone FROM runs r JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id WHERE r.id = $1 AND r.owner_id = $2 AND c.deleted_at IS NULL', [id, owner]);
+    const result = await this.db.query<Run>('SELECT r.id, r.conversation_id, r.status, r.cutoff, r.error, r.created_at, r.verify_current, r.timezone, r.parent_run_id FROM runs r JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id WHERE r.id = $1 AND r.owner_id = $2 AND c.deleted_at IS NULL', [id, owner]);
     if (!result.rows.length) throw new NotFound('Run not found');
     return result.rows[0];
+  }
+
+  async runInput(owner: string, runId: string) {
+    const result = await this.db.query<{ input: string }>('SELECT t.input FROM turns t JOIN runs r ON r.turn_id = t.id AND r.owner_id = t.owner_id JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id WHERE r.id = $1 AND r.owner_id = $2 AND c.deleted_at IS NULL', [runId, owner]);
+    if (!result.rows.length) throw new NotFound('Run not found');
+    return result.rows[0].input;
   }
 
   async activeRun(owner: string, conversation: string) {
@@ -473,8 +489,9 @@ export class Store {
   async messages(owner: string, conversation: string, after = 0, limit = 50): Promise<Message[]> {
     const owned = await this.db.query('SELECT id FROM conversations WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL', [conversation, owner]);
     if (!owned.rows.length) throw new NotFound('Conversation not found');
-    const rows = (await this.db.query<Message & { run_id: string | null }>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at,
-      (SELECT r.id FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id) AS run_id, ARRAY(
+    const rows = (await this.db.query<Message>(`SELECT m.id, m.role, m.content, m.ordinal, m.created_at,
+      (SELECT r.id FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id) AS run_id,
+      (SELECT r.status FROM runs r WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id) AS run_status, ARRAY(
       SELECT DISTINCT source_id FROM (
         SELECT ce.evidence_id AS source_id FROM runs r JOIN answer_claims ac ON ac.run_id = r.id JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE r.turn_id = m.turn_id AND r.owner_id = m.owner_id AND m.role = 'assistant'
         UNION ALL
@@ -488,7 +505,16 @@ export class Store {
       FROM messages m WHERE m.owner_id = $1 AND m.conversation_id = $2 AND m.ordinal > $3 ORDER BY m.ordinal LIMIT $4`, [owner, conversation, after, limit])).rows;
     const revoked = new Set<string>();
     for (const row of rows) if (row.role === 'assistant' && row.run_id && await this.hasRevokedContext(owner, row.run_id)) revoked.add(row.id);
-    return rows.filter(row => !revoked.has(row.id)).map(({ run_id: _runId, ...message }) => message);
+    return rows.filter(row => !revoked.has(row.id));
+  }
+
+  async continuationSource(owner: string, runId: string) {
+    const run = await this.getRun(owner, runId);
+    if (run.status !== 'incomplete') throw new Conflict('Only an incomplete run can be continued');
+    const result = await this.db.query<{ conversation_id: string; input: string; verify_current: boolean }>(`SELECT r.conversation_id, t.input, r.verify_current
+      FROM runs r JOIN turns t ON t.id = r.turn_id WHERE r.id = $1 AND r.owner_id = $2 AND r.status = 'incomplete'`, [runId, owner]);
+    if (!result.rows.length) throw new NotFound('Incomplete run not found');
+    return { ...result.rows[0], parent_run_id: runId, eligible: !(await this.hasRevokedContext(owner, runId)) };
   }
 
   async context(owner: string, runId: string) {
@@ -840,6 +866,12 @@ export class Store {
       if (!result.rows.length) throw new Error('Completed run has no answer');
       return { kind: 'completed', data: JSON.stringify({ content: result.rows[0].content }) };
     }
+    if (run.status === 'incomplete') {
+      const result = await this.db.query<{ content: string }>(`SELECT m.content FROM messages m JOIN runs r ON r.turn_id = m.turn_id
+        WHERE r.id = $1 AND r.owner_id = $2 AND m.owner_id = $2 AND m.role = 'assistant'`, [runId, owner]);
+      if (!result.rows.length) throw new Error('Incomplete run has no limitation message');
+      return { kind: 'incomplete', data: JSON.stringify({ content: result.rows[0].content }) };
+    }
     if (run.status === 'failed') return { kind: 'failed', data: JSON.stringify({ message: run.error || 'The run failed.' }) };
     if (run.status === 'cancelled') return { kind: 'cancelled', data: '{}' };
     throw new Error('Unknown terminal status');
@@ -948,6 +980,29 @@ export class Store {
       await tx.query("UPDATE turns SET status = 'completed' WHERE id = $1", [run.turn_id]);
       await tx.query("UPDATE jobs SET status = 'completed' WHERE run_id = $1", [runId]);
       await tx.query("INSERT INTO run_events (run_id, kind, data) VALUES ($1, 'completed', $2)", [runId, JSON.stringify({ content })]);
+      return true;
+    });
+  }
+
+  async publishIncomplete(owner: string, runId: string, content: string) {
+    return this.db.transaction(async tx => {
+      const result = await tx.query<{ turn_id: string; conversation_id: string; status: string }>(`SELECT r.turn_id, r.conversation_id, r.status FROM runs r
+        JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id AND c.deleted_at IS NULL
+        WHERE r.id = $1 AND r.owner_id = $2`, [runId, owner]);
+      const run = result.rows[0];
+      if (!run) throw new NotFound('Run not found');
+      if (run.status !== 'active') return false;
+      const revoked = await tx.query(`SELECT 1 FROM reference_snapshots rs JOIN reference_snapshot_items i ON i.snapshot_id = rs.id JOIN conversations sc ON sc.id = i.conversation_id
+        WHERE rs.run_id = $1 AND rs.owner_id = $2 AND (rs.revoked = true OR sc.deleted_at IS NOT NULL OR (sc.id <> $3 AND sc.recall_eligible = false))
+        UNION ALL SELECT 1 FROM history_snapshots hs JOIN history_snapshot_items i ON i.snapshot_id = hs.id JOIN conversations sc ON sc.id = i.conversation_id
+        WHERE hs.run_id = $1 AND hs.owner_id = $2 AND (hs.revoked = true OR sc.deleted_at IS NOT NULL OR (sc.id <> $3 AND sc.recall_eligible = false)) LIMIT 1`, [runId, owner, run.conversation_id]);
+      if (revoked.rows.length) throw new Conflict('Selected history is no longer eligible for reuse');
+      const sequence = await tx.query<{ value: number }>('UPDATE owner_sequences SET value = value + 1 WHERE owner_id = $1 RETURNING value', [owner]);
+      await tx.query("INSERT INTO messages (id, conversation_id, owner_id, turn_id, role, content, ordinal) VALUES ($1, $2, $3, $4, 'assistant', $5, $6)", [randomUUID(), run.conversation_id, owner, run.turn_id, content, sequence.rows[0].value]);
+      await tx.query("UPDATE runs SET status = 'incomplete' WHERE id = $1 AND owner_id = $2", [runId, owner]);
+      await tx.query("UPDATE turns SET status = 'incomplete' WHERE id = $1", [run.turn_id]);
+      await tx.query("UPDATE jobs SET status = 'incomplete' WHERE run_id = $1", [runId]);
+      await tx.query("INSERT INTO run_events (run_id, kind, data) VALUES ($1, 'incomplete', $2)", [runId, JSON.stringify({ content })]);
       return true;
     });
   }

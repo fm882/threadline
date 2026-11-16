@@ -40,7 +40,16 @@ try {
   await page.getByLabel('Your message').fill('What is the current Acme Basic monthly price? [source:00000000-0000-4000-8000-000000000000]');
   await page.getByRole('checkbox', { name: /Verify current information/ }).check();
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByText('Reviewing sources…').waitFor({ timeout: 15000 });
+  try { await page.getByText('Reviewing sources…').waitFor({ timeout: 15000 }); }
+  catch {
+    const diagnostic = await page.evaluate(async () => {
+      const { conversations } = await (await fetch('/api/conversations')).json();
+      const { messages } = await (await fetch(`/api/conversations/${conversations[0].id}/messages`)).json();
+      const last = messages.at(-1);
+      return last?.run_id ? await (await fetch(`/api/runs/${last.run_id}`)).json() : null;
+    });
+    throw new Error(`Research search did not start: ${await page.locator('.transcript').innerText()} | ${await page.locator('.composer').innerText()} | ${JSON.stringify(diagnostic)}`);
+  }
   assert.equal(await page.getByText('Acme Basic is USD 12 monthly', { exact: false }).count(), 0);
   await page.getByText('Acme Basic is USD 12 monthly', { exact: false }).waitFor({ timeout: 15000 });
   const answerText = await page.locator('article.assistant .content').innerText();
@@ -105,6 +114,24 @@ try {
   await page.getByRole('button', { name: 'View discussion source' }).click();
   await page.getByRole('region', { name: 'Historical discussion' }).getByText('CRM shortlist for a nonprofit', { exact: true }).waitFor();
   console.log('Paraphrased hybrid history retrieval and snapshot inspection survived restart.');
+
+  await page.getByRole('button', { name: '+ New conversation' }).click();
+  await page.getByLabel('Your message').fill('[deadline fixture] Research current CRM pricing.');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByText('No supported partial findings are available yet.', { exact: false }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: 'Continue research' }).click();
+  await page.getByText('Continuation completed with a fresh time limit.', { exact: true }).waitFor({ timeout: 15000 });
+  const continuationLink = await page.evaluate(async () => {
+    const { conversations } = await (await fetch('/api/conversations')).json();
+    const { messages } = await (await fetch(`/api/conversations/${conversations[0].id}/messages`)).json();
+    const parent = messages.find(message => message.role === 'assistant' && message.run_status === 'incomplete');
+    const child = messages.at(-1);
+    const run = await (await fetch(`/api/runs/${child.run_id}`)).json();
+    return { parentRunId: parent.run_id, linkedParentRunId: run.parent_run_id, childStatus: run.status };
+  });
+  assert.equal(continuationLink.linkedParentRunId, continuationLink.parentRunId);
+  assert.equal(continuationLink.childStatus, 'completed');
+  console.log('Deadline limitation and explicit linked continuation survived the browser flow.');
 } finally {
   if (browser) await browser.close();
   await stop(api); await stop(vite); await new Promise(resolve => gateway.close(resolve));

@@ -10,6 +10,7 @@ import { createDispatcher, type Dispatcher, type RunWorker } from '../jobs/dispa
 export const chunks = new EventEmitter();
 chunks.setMaxListeners(0);
 const bodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000), verifyCurrent: z.boolean().default(false) }).strict();
+const continuationBodySchema = z.object({ input: z.string().min(1).max(MAX_INPUT_CHARS).refine(value => value.trim().length > 0 && Buffer.byteLength(value) <= 16_000).optional() }).strict();
 const timezoneSchema = z.object({ timezone: z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }), initialize: z.boolean().default(false), fallback: z.boolean().default(false) }).strict().refine(value => !value.fallback || (value.initialize && value.timezone === 'UTC'));
 const recallSchema = z.object({ recallEligible: z.boolean() }).strict();
 const cursorSchema = z.coerce.number().int().min(0).max(2_147_483_647).default(0);
@@ -90,6 +91,22 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     dispatcher.dispatch(identity, id);
     return c.json({ runId: id }, 202);
   });
+  app.post('/api/runs/:id/continue', async c => {
+    const key = c.req.header('Idempotency-Key');
+    if (!key || key.length > 200) return c.json({ error: 'A valid Idempotency-Key is required' }, 400);
+    const parsed = continuationBodySchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: 'Continuation input must be nonempty, at most 8000 characters and at most 16000 UTF-8 bytes' }, 400);
+    const identity = owner(c.req.raw), parent = await store.continuationSource(identity, c.req.param('id'));
+    const input = parsed.data.input || parent.input;
+    const existing = await store.existingAdmission(identity, parent.conversation_id, key, input, parent.verify_current, parent.parent_run_id);
+    if (existing) return c.json({ runId: existing }, 202);
+    if (!parent.eligible) throw new Conflict('This run cannot be continued because its history is no longer eligible');
+    const problem = await ready();
+    if (problem) return c.json({ error: problem }, 503);
+    const id = await store.admit(identity, parent.conversation_id, key, input, parent.verify_current, parent.parent_run_id);
+    dispatcher.dispatch(identity, id);
+    return c.json({ runId: id, continuationOf: c.req.param('id') }, 202);
+  });
   app.get('/api/evidence/:id', async c => c.json(await store.evidence(owner(c.req.raw), c.req.param('id'))));
   app.get('/api/history/:id', async c => {
     const after = cursorSchema.safeParse(c.req.query('after'));
@@ -115,7 +132,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
     const checkpoint = await store.eventCursor(identity, id, cursor.data);
     return streamSSE(c, async stream => {
       let last = checkpoint.valid ? cursor.data : 0;
-      let terminalSeen = ['completed', 'failed', 'cancelled'].includes(checkpoint.kind || '');
+      let terminalSeen = ['completed', 'incomplete', 'failed', 'cancelled'].includes(checkpoint.kind || '');
       const pending: string[] = [];
       let pendingBytes = 0;
       const listener = (part: string) => {
@@ -134,7 +151,7 @@ export function createApp(options: { store: Store; owner: (request: Request) => 
         while (!stream.aborted) {
           const events = await store.events(identity, id, last);
           for (const event of events) {
-            if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
+            if (event.kind === 'completed' || event.kind === 'incomplete' || event.kind === 'failed' || event.kind === 'cancelled') {
               terminalSeen = true;
               chunks.off(id, listener);
               await drain();
