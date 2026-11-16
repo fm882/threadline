@@ -1,6 +1,11 @@
 import { cpus, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { serve } from '@hono/node-server';
 import { Store } from '../src/persistence/store.ts';
@@ -13,6 +18,61 @@ const decoder = new TextDecoder();
 const db = new PGlite();
 const store = new Store(db);
 await store.initialize();
+
+async function beginCrashRecoveryFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'minmi-load-crash-'));
+  let requests = 0, child;
+  const gateway = createServer(async (req, res) => {
+    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }] })); return; }
+    for await (const _ of req) { /* consume the synthetic request */ }
+    requests++;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (requests === 1) { res.flushHeaders(); return; }
+    res.write(`data: ${JSON.stringify({ id: 'crash-recovery', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: { role: 'assistant', content: 'Recovered after process crash.' }, finish_reason: null }] })}\n\n`);
+    res.end(`data: ${JSON.stringify({ id: 'crash-recovery', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+  });
+  gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
+  const gatewayAddress = gateway.address();
+  if (!gatewayAddress || typeof gatewayAddress === 'string') throw new Error('Crash fixture gateway did not bind');
+  const reserved = createServer(); reserved.listen(0, '127.0.0.1'); await once(reserved, 'listening');
+  const reservedAddress = reserved.address();
+  if (!reservedAddress || typeof reservedAddress === 'string') throw new Error('Crash fixture API port did not bind');
+  const apiPort = reservedAddress.port;
+  await new Promise(resolve => reserved.close(resolve));
+  const base = `http://127.0.0.1:${apiPort}`;
+  const start = () => spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { cwd: process.cwd(), stdio: 'ignore', env: { ...process.env, APP_DATA_DIR: dir, PORT: String(apiPort), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayAddress.port}/v1`, INFERENCE_API_KEY: 'fixture', CHAT_MAIN_MODEL: 'chat-main-v1', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' } });
+  const waitUntil = async (predicate, timeoutMs = 15_000) => {
+    const until = Date.now() + timeoutMs;
+    while (Date.now() < until) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
+    throw new Error('Crash-recovery fixture timed out');
+  };
+  const stop = async (signal = 'SIGKILL') => {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, 'exit'); child.kill(signal); await exited;
+  };
+  try {
+    child = start();
+    await waitUntil(async () => (await fetch(`${base}/health/ready`).catch(() => null))?.ok === true);
+    const conversation = (await (await fetch(`${base}/api/conversations`, { method: 'POST' })).json()).id;
+    const admitted = await fetch(`${base}/api/conversations/${conversation}/turns`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'load-crash' }, body: JSON.stringify({ input: 'Recover this run after a local process crash.' }) });
+    if (admitted.status !== 202) throw new Error('Crash fixture run was not admitted');
+    const { runId } = await admitted.json();
+    await waitUntil(async () => requests === 1);
+    return {
+      async recover() {
+        await stop(); child = start();
+        await waitUntil(async () => (await (await fetch(`${base}/api/runs/${runId}`).catch(() => null))?.json?.().catch(() => null))?.status === 'completed');
+        const messages = await (await fetch(`${base}/api/conversations/${conversation}/messages`)).json();
+        return { crashedProcess: true, recoveredStatus: (await (await fetch(`${base}/api/runs/${runId}`)).json()).status, gatewayRequests: requests, oneLogicalAnswer: messages.messages.map(item => item.content).join('\n').match(/Recovered after process crash\./g)?.length === 1 };
+      },
+      async close() {
+        await stop('SIGTERM'); gateway.closeAllConnections(); await new Promise(resolve => gateway.close(resolve)); await rm(dir, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await stop('SIGTERM'); gateway.closeAllConnections(); await new Promise(resolve => gateway.close(resolve)); await rm(dir, { recursive: true, force: true }); throw error;
+  }
+}
 
 const space = await store.createEmbeddingGeneration({ id: 'local-load-fixture', model: 'deterministic-load-v1', dimensions: 3, normalized: true, queryMode: 'shared', documentMode: 'shared', chunkingVersion: 'exchange-v1' });
 await store.activateEmbeddingGeneration(space.id, space.generation);
@@ -89,6 +149,7 @@ async function subscribe(runId, slow = false) {
 }
 
 const indexerStart = performance.now();
+let crashRecovery;
 try {
   for (let i = 0; i < activeTurns; i++) {
     const created = await fetch(`${base}/api/conversations`, { method: 'POST' });
@@ -111,9 +172,12 @@ try {
   await waitUntil(() => runIds.every(runId => chunks.listenerCount(runId) === clientsPerTurn));
   const initialConnectedClients = connectedClients;
   const slowStream = subscriptions[0];
+  crashRecovery = await beginCrashRecoveryFixture();
   const workloadStarted = performance.now();
+  const crashRecoveryPromise = crashRecovery.recover();
   releaseWorkers();
   const monitored = await Promise.all(subscriptions.filter(subscription => subscription.monitoring).map(subscription => subscription.monitoring));
+  const crashResult = await crashRecoveryPromise;
   const workloadMs = performance.now() - workloadStarted;
   const slowText = await slowStream.reader.read().then(async first => {
     let text = first.value ? decoder.decode(first.value) : '';
@@ -146,13 +210,14 @@ try {
       terminal: { p50: percentile([...terminalLatencyByRun.values()], 0.5), p95: percentile([...terminalLatencyByRun.values()], 0.95), samples: terminalLatencyByRun.size },
       initialWorkloadWall: Number(workloadMs.toFixed(2)), reconnectBurstWall: Number(reconnectMs.toFixed(2)),
     },
-    outcomes: { terminals: Object.fromEntries([...terminalByRun.entries()]), runStatuses: finalStatuses, expectedSyntheticOutages: 1, connectionErrors, slowConsumerReceivedCanonicalCompletion: slowText.includes('event: completed') && slowText.includes('Synthetic verified answer'), indexingStatusCounts: indexCounts, indexingElapsedMs: Number((performance.now() - indexerStart).toFixed(2)) },
-    limitations: ['Synthetic workers and embeddings do not measure hosted provider latency, quality, cost, or multi-process capacity.', 'The process-crash fixtures run separately from this in-memory concurrency workload.'],
+    outcomes: { terminals: Object.fromEntries([...terminalByRun.entries()]), runStatuses: finalStatuses, expectedSyntheticOutages: 1, connectionErrors, slowConsumerReceivedCanonicalCompletion: slowText.includes('event: completed') && slowText.includes('Synthetic verified answer'), processCrashRecovery: crashResult, indexingStatusCounts: indexCounts, indexingElapsedMs: Number((performance.now() - indexerStart).toFixed(2)) },
+    limitations: ['Synthetic workers and embeddings do not measure hosted provider latency, quality, cost, or multi-process capacity.', 'The hard-crash recovery process uses an independent file-backed store and gateway fixture; the process handling the 100 primary SSE clients was not killed and its in-memory database was not shared with the crash fixture.'],
   };
-  if (initialConnectedClients !== clientCount || reconnectConnectedClients !== clientCount || finalStatuses.filter(status => status === 'completed').length !== activeTurns - 1 || finalStatuses.filter(status => status === 'failed').length !== 1 || connectionErrors || !result.outcomes.slowConsumerReceivedCanonicalCompletion) throw new Error(`Local load acceptance failed: ${JSON.stringify(result)}`);
+  if (initialConnectedClients !== clientCount || reconnectConnectedClients !== clientCount || finalStatuses.filter(status => status === 'completed').length !== activeTurns - 1 || finalStatuses.filter(status => status === 'failed').length !== 1 || connectionErrors || !result.outcomes.slowConsumerReceivedCanonicalCompletion || crashResult.recoveredStatus !== 'completed' || crashResult.gatewayRequests !== 2 || !crashResult.oneLogicalAnswer) throw new Error(`Local load acceptance failed: ${JSON.stringify(result)}`);
   console.log(JSON.stringify(result, null, 2));
 } finally {
   releaseWorkers();
+  if (crashRecovery) await crashRecovery.close().catch(() => {});
   await stopIndexing();
   await dispatcher.shutdown();
   if ('closeAllConnections' in server) server.closeAllConnections();
