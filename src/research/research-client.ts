@@ -11,6 +11,7 @@ import { compactSerializedMessages, ContextBudgetError } from './context-budget.
 
 const tool = { type: 'function' as const, function: { name: 'web_search', description: 'Search the public web for current information when needed. For a multi-subject request, include the requested subject names so each can receive a finding or explicit gap.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, subjects: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 200 }, maxItems: 10, description: 'Subjects the user asked to compare or verify' } }, required: ['query'], additionalProperties: false } } };
 const querySchema = z.object({ query: z.string().trim().min(1).max(500), subjects: z.array(z.string().trim().min(1).max(200)).max(10).default([]) }).strict();
+const subjectAnchor = (subject: string) => subject.trim().split(/\s+/)[0];
 const comparisonSchema = z.object({
   subject: z.string().trim().min(1).max(200), attribute: z.string().trim().min(1).max(100),
   outcome: z.enum(['supported_change', 'prior_error', 'no_relevant_update_found', 'inconclusive', 'historical_support_missing']),
@@ -222,7 +223,9 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       return toolResults;
     };
     const plans = parseCalls(calls);
-    requiredSubjects = [...new Set(plans.flatMap(plan => plan.subjects))];
+    const authorizedSubjectText = `${currentQuestion}\n${historicalContext}`.toLocaleLowerCase();
+    requiredSubjects = [...new Set(plans.flatMap(plan => plan.subjects).map(subjectAnchor).filter(subject => authorizedSubjectText.includes(subject.toLocaleLowerCase())))];
+    if (!requiredSubjects.length) requiredSubjects = [...new Set(plans.flatMap(plan => plan.subjects))];
     const toolResults = await executePlans(plans);
     let observations = [...observationsByQuery.values()].flat();
     if (!observations.length) return { content: 'Web search did not return usable sources, so I cannot verify current information. Please try again later.', claims: [] };
@@ -246,8 +249,8 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       if (followupRounds >= 2) throw new RunBudgetExceeded('Research used its bounded follow-up rounds before the model returned a final answer');
       if (continuation.invalid_tool_calls?.length) throw new Error('Invalid tool call');
       const additionalPlans = parseCalls(continuation.tool_calls);
-      const authorizedSubjectText = currentQuestion.toLocaleLowerCase();
-      requiredSubjects = [...new Set([...requiredSubjects, ...additionalPlans.flatMap(plan => plan.subjects).filter(subject => authorizedSubjectText.includes(subject.trim().toLocaleLowerCase()))])];
+      const authorizedFollowupText = currentQuestion.toLocaleLowerCase();
+      requiredSubjects = [...new Set([...requiredSubjects, ...additionalPlans.flatMap(plan => plan.subjects).map(subjectAnchor).filter(subject => authorizedFollowupText.includes(subject.toLocaleLowerCase()))])];
       const additionalResults = await executePlans(additionalPlans);
       observations = [...observationsByQuery.values()].flat();
       if (!observations.length) return { content: 'Web search did not return usable sources, so I cannot verify current information. Please try again later.', claims: [] };
@@ -271,7 +274,8 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
             const alias = comparison.subject.trim().toLocaleLowerCase();
             const matches = requiredSubjects.filter(subject => {
               const canonical = subject.trim().toLocaleLowerCase();
-              return canonical === alias || canonical.startsWith(`${alias} `) || canonical.includes(` ${alias} `);
+              const anchor = subjectAnchor(alias);
+              return canonical === alias || canonical === anchor || canonical.startsWith(`${alias} `) || alias.startsWith(`${canonical} `);
             });
             if (matches.length === 1) comparison.subject = matches[0];
           }
