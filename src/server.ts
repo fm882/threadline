@@ -68,7 +68,7 @@ const runner = async (owner: string, run: string, signal: AbortSignal) => {
   const current = config();
   const record = await store.getRun(owner, run);
   const searchKey = process.env.TAVILY_API_KEY;
-  const client = searchKey ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey, store, owner, runId: run, verifyCurrent: record.verify_current, contextTokens: current.contextTokens,
+  const client = searchKey ? researchClient({ baseURL: current.base, apiKey: current.key, model: current.model, searchKey, store, owner, runId: run, verifyCurrent: record.verify_current, contextTokens: current.contextTokens, fallback: current.fallback,
     search: async (query, signal) => {
       const { current: input } = await store.context(owner, run);
       return searchCache.search(owner, query, record.verify_current || requiresCurrentVerification(input.content), tavilySearch(searchKey), signal);

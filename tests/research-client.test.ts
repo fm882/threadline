@@ -311,3 +311,82 @@ it('does not schedule a model continuation after cancellation during search', as
     expect((await store.messages('alice', conversation))).toHaveLength(1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('recompiles the full research prompt against the smaller verified fallback after a retryable main-route failure', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'fallback-key', 'What is Northstar CRM current pricing?');
+  const requests: any[] = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    const request = JSON.parse(body); requests.push(request);
+    if (request.model === 'chat-main-v1') {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'synthetic main-route outage', type: 'server_error' } }));
+      return;
+    }
+    let message: object;
+    if (requests.filter(item => item.model === 'chat-fast-v1').length === 1) {
+      message = { role: 'assistant', content: null, tool_calls: [{ id: 'fallback_search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: 'Northstar CRM pricing', subjects: ['Northstar CRM'] }) } }] };
+    } else {
+      const evidence = JSON.parse(request.messages.find((item: any) => item.role === 'tool').content)[0];
+      message = { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'The Starter plan costs $19 per seat monthly.', kind: 'pricing', evidenceIds: [evidence.id] }], requestedSubjects: [], comparisons: [], uncertainty: 'Synthetic fixture only.' }) };
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: `fallback-${requests.length}`, object: 'chat.completion', created: 1, model: request.model, choices: [{ index: 0, message, finish_reason: message && 'tool_calls' in message ? 'tool_calls' : 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const fallback = {
+      model: 'chat-fast-v1', streaming: true as const, toolCalls: true as const, promptedJson: true as const,
+      contextTokens: 16_000, maxOutputTokens: 1024 as const,
+      verification: { streaming: 'passed' as const, researchContract: 'passed' as const, backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
+    };
+    const client = researchClient({
+      baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 32_000,
+      fallback, searchKey: '', store, owner: 'alice', runId,
+      now: () => new Date('2026-11-16T00:00:00.000Z'),
+      search: async () => [{ url: 'https://example.com/northstar', title: 'Northstar pricing', excerpt: 'Starter costs $19 per seat monthly.', observedAt: '2026-11-16T00:00:00.000Z', provider: 'tavily', representation: 'search_snippet' }],
+    });
+    const history = Array.from({ length: 3 }, (_, i) => [
+      { role: 'user' as const, content: `Historical question ${i} ${'x'.repeat(4000)}` },
+      { role: 'assistant' as const, content: `Historical answer ${i} ${'y'.repeat(4000)}` },
+    ]).flat();
+    const answer = await client([...history, { role: 'user', content: 'What is Northstar CRM current pricing?' }], () => {}, AbortSignal.timeout(5000));
+    expect(requests.map(item => item.model)).toEqual(['chat-main-v1', 'chat-fast-v1', 'chat-fast-v1']);
+    expect(requests[1].messages.length).toBeLessThan(requests[0].messages.length);
+    expect(JSON.stringify(requests[1].messages)).toContain('What is Northstar CRM current pricing?');
+    expect(answer).toMatchObject({ claims: [{ claim: expect.stringContaining('$19') }] });
+    const budget = await store.researchBudget('alice', runId);
+    expect(budget.model_calls).toBe(3);
+    expect(budget.prompt_bytes).toBeGreaterThan(Buffer.byteLength(JSON.stringify(requests[0].messages)) + Buffer.byteLength(JSON.stringify(requests[1].messages)));
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
+it('does not fall back after a main-route capability or request rejection', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'unsupported-key', 'Hello.');
+  let requests = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume the request */ }
+    requests++;
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'tool or prompt format unsupported', type: 'invalid_request_error' } }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({
+      baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 32_000,
+      fallback: {
+        model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true, contextTokens: 16_000, maxOutputTokens: 1024,
+        verification: { streaming: 'passed', researchContract: 'passed', backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
+      },
+      searchKey: '', store, owner: 'alice', runId,
+    });
+    await expect(client([{ role: 'user', content: 'Hello.' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
+    expect(requests).toBe(1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});

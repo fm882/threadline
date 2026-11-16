@@ -49,3 +49,25 @@ it('reports an unreadable local key as a safe configuration failure', async () =
     expect(await gatewayReadiness(config)()).toBe(config.error);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+it('requires an attested fallback route to be advertised before readiness', async () => {
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = await mkdtemp(join(tmpdir(), 'minmi-readiness-'));
+  const path = join(dir, 'manifest.json');
+  await writeFile(path, JSON.stringify({
+    version: 'fixture-v1',
+    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 32_000, maxOutputTokens: 1024 },
+    chatFallback: {
+      model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true,
+      contextTokens: 16_000, maxOutputTokens: 1024,
+      verification: { streaming: 'passed', researchContract: 'passed', backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
+    },
+  }));
+  try {
+    const config = gatewayConfig({ INFERENCE_API_KEY: 'secret', MODEL_CAPABILITIES_PATH: path, BEDROCK_FAST_ROUTE: 'bedrock/converse/us.amazon.nova-micro-v1:0' });
+    expect(await gatewayReadiness(config, async () => Response.json({ data: [{ id: 'chat-main-v1' }] }))()).toContain('fallback model');
+    expect(await gatewayReadiness(config, async () => Response.json({ data: [{ id: 'chat-main-v1' }, { id: 'chat-fast-v1' }] }))()).toBeNull();
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

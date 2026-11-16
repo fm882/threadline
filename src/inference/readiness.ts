@@ -5,7 +5,8 @@ export function gatewayConfig(env: NodeJS.ProcessEnv, keyPath = '.data/litellm.k
   const base = env.INFERENCE_BASE_URL || 'http://127.0.0.1:4000/v1';
   const url = URL.parse(base);
   const model = env.CHAT_MAIN_MODEL || 'chat-main-v1';
-  const capabilities = loadCapabilities(env.MODEL_CAPABILITIES_PATH || 'config/model-capabilities.json', model);
+  const fallbackModel = env.CHAT_FAST_MODEL || 'chat-fast-v1';
+  const capabilities = loadCapabilities(env.MODEL_CAPABILITIES_PATH || 'config/model-capabilities.json', model, fallbackModel, env.BEDROCK_FAST_ROUTE);
   const local = url && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   let key = env.INFERENCE_API_KEY || '';
   let keyError: string | null = null;
@@ -21,7 +22,13 @@ export function gatewayConfig(env: NodeJS.ProcessEnv, keyPath = '.data/litellm.k
       ? 'Set a valid INFERENCE_BASE_URL without credentials or query parameters.'
       : !local && url.protocol !== 'https:' ? 'Remote inference requires an HTTPS endpoint.'
       : keyError || (!key ? 'Start the local gateway or set INFERENCE_API_KEY.' : null);
-  return { base: base.replace(/\/$/, ''), key, model, contextTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.contextTokens : 32_000, maxOutputTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.maxOutputTokens : 1024, error };
+  return {
+    base: base.replace(/\/$/, ''), key, model,
+    contextTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.contextTokens : 32_000,
+    maxOutputTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.maxOutputTokens : 1024,
+    fallback: 'fallback' in capabilities ? capabilities.fallback : undefined,
+    error,
+  };
 }
 
 export function gatewayReadiness(config: ReturnType<typeof gatewayConfig>, request: typeof fetch = fetch) {
@@ -33,10 +40,13 @@ export function gatewayReadiness(config: ReturnType<typeof gatewayConfig>, reque
       });
       if (!response.ok) return 'Gateway is unavailable or rejected its credentials. Check gateway configuration.';
       const data: unknown = await response.json();
-      if (!data || typeof data !== 'object' || !('data' in data) || !Array.isArray(data.data) ||
-          !data.data.some((item: unknown) => typeof item === 'object' && item !== null && 'id' in item && item.id === config.model)) {
+      const advertised = data && typeof data === 'object' && 'data' in data && Array.isArray(data.data)
+        ? data.data.flatMap((item: unknown) => typeof item === 'object' && item !== null && 'id' in item && typeof item.id === 'string' ? [item.id] : [])
+        : [];
+      if (!advertised.includes(config.model)) {
         return 'Gateway does not advertise the configured chat model. Check the model route.';
       }
+      if (config.fallback && !advertised.includes(config.fallback.model)) return 'Gateway does not advertise the verified research fallback model. Check the fast model route.';
       return null;
     } catch {
       return 'Gateway is unavailable. Start the gateway and check INFERENCE_BASE_URL.';
