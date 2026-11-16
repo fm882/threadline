@@ -19,7 +19,7 @@ it('turns a run deadline into an explicit incomplete terminal result, distinct f
     expect((await store.getRun('alice', run)).status).toBe('incomplete');
     expect(await store.terminalSnapshot('alice', run)).toMatchObject({ kind: 'incomplete' });
     expect((await store.events('alice', run)).at(-1)?.kind).toBe('incomplete');
-    expect((await store.messages('alice', conversation)).at(-1)?.content).toContain('Supported findings or explicit evidence gaps are still needed for: Acme, Northstar.');
+    expect((await store.messages('alice', conversation)).at(-1)?.content).toContain('Subjects still needing evidence: Acme, Northstar.');
   } finally { saver.db.close(); await db.close(); }
 });
 

@@ -44,6 +44,24 @@ it('rejects invented and other-run citations atomically before publication', asy
   } finally { await db.close(); }
 });
 
+it('publishes incomplete source observations only with citations from that same run', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const c1 = await store.createConversation('alice'), c2 = await store.createConversation('alice');
+    const run = await store.admit('alice', c1, 'partial', 'question');
+    const other = await store.admit('alice', c2, 'other-partial', 'question');
+    const result = [{ url: 'https://example.com/', title: 'Source', excerpt: 'Observed excerpt', observedAt: new Date().toISOString(), provider: 'tavily' as const, representation: 'search_snippet' as const }];
+    const [own] = await store.registerEvidence('alice', run, result);
+    const [foreign] = await store.registerEvidence('alice', other, result);
+    await expect(store.publishIncomplete('alice', run, 'partial', [{ claim: 'supported observation', evidenceIds: [foreign.id] }])).rejects.toBeInstanceOf(Conflict);
+    expect(await store.publishIncomplete('alice', run, `partial [source:${own.id}]`, [{ claim: 'supported observation', evidenceIds: [own.id] }])).toBe(true);
+    const message = (await store.messages('alice', c1)).at(-1)!;
+    expect(message.citation_ids).toEqual([own.id]);
+    expect((await store.getRun('alice', run)).status).toBe('incomplete');
+  } finally { await db.close(); }
+});
+
 it('exposes citation links only for validated claims on the matching assistant message', async () => {
   const db = new PGlite();
   try {

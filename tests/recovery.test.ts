@@ -89,11 +89,19 @@ it('keeps backpressure and indexing effective through a dependency timeout, then
     const first = await store.admit('alice', conversation, 'timeout', 'Research with a stalled dependency');
     const laterConversation = await store.createConversation('alice');
     const second = await store.admit('alice', laterConversation, 'after-timeout', 'A later bounded run');
-    let calls = 0, started!: () => void;
+    let calls = 0, partialEvidenceId = '', started!: () => void;
     const entered = new Promise<void>(resolve => { started = resolve; });
     const client = async () => {
       calls++;
-      if (calls === 1) { started(); return new Promise<string>(() => {}); }
+      if (calls === 1) {
+        await store.setRequestedSubjects('alice', first, ['Acme CRM', 'Northstar CRM']);
+        const searchId = await store.startSearch('alice', first, 'Acme CRM pricing');
+        await store.finishSearch('alice', first, searchId, 'completed');
+        const [observation] = await store.registerEvidence('alice', first, [{ url: 'https://example.test/acme', title: 'Acme CRM current pricing', excerpt: 'Acme CRM Growth costs USD 12 monthly per seat.', observedAt: new Date().toISOString(), provider: 'tavily', representation: 'search_snippet' }], searchId);
+        partialEvidenceId = observation.id;
+        started();
+        return new Promise<string>(() => {});
+      }
       return 'Recovered answer';
     };
     const runner = createChatRunner(store, saver, client, () => {}, undefined, 600);
@@ -105,6 +113,11 @@ it('keeps backpressure and indexing effective through a dependency timeout, then
       expect(await processIndexJob(store, indexJob, space, async inputs => inputs.map(() => [1, 0, 0]))).toBe(true);
       expect(await store.pendingIndexJobs(4, space)).toHaveLength(0);
       await waitFor(async () => (await store.getRun('alice', first)).status === 'incomplete');
+      const partial = (await store.messages('alice', conversation)).at(-1)!;
+      expect(partial.content).toContain('Acme CRM');
+      expect(partial.content).toContain('Northstar CRM');
+      expect(partial.content).toContain('search snippet');
+      expect(partial.citation_ids).toContain(partialEvidenceId);
       expect(dispatcher.dispatch('alice', second)).toBe(true);
       await waitFor(async () => (await store.getRun('alice', second)).status === 'completed');
       expect(calls).toBe(2);

@@ -892,6 +892,14 @@ export class Store {
     return result.rows[0];
   }
 
+  async evidenceForRun(owner: string, runId: string) {
+    await this.getRun(owner, runId);
+    return (await this.db.query<{ id: string; title: string; excerpt: string; observed_at: Date; representation: string }>(`SELECT eo.id, eo.title, eo.excerpt, eo.observed_at, eo.representation
+      FROM evidence_observations eo JOIN runs r ON r.id = eo.run_id AND r.owner_id = eo.owner_id
+      JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id AND c.deleted_at IS NULL
+      WHERE eo.owner_id = $1 AND eo.run_id = $2 ORDER BY eo.observed_at, eo.id`, [owner, runId])).rows;
+  }
+
   async eventCursor(owner: string, runId: string, cursor: number) {
     await this.getRun(owner, runId);
     if (await this.hasRevokedContext(owner, runId)) return { valid: false, kind: null as string | null };
@@ -1028,7 +1036,7 @@ export class Store {
     });
   }
 
-  async publishIncomplete(owner: string, runId: string, content: string) {
+  async publishIncomplete(owner: string, runId: string, content: string, claims: { claim: string; evidenceIds: string[] }[] = []) {
     return this.db.transaction(async tx => {
       const result = await tx.query<{ turn_id: string; conversation_id: string; status: string }>(`SELECT r.turn_id, r.conversation_id, r.status FROM runs r
         JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id AND c.deleted_at IS NULL
@@ -1041,6 +1049,16 @@ export class Store {
         UNION ALL SELECT 1 FROM history_snapshots hs JOIN history_snapshot_items i ON i.snapshot_id = hs.id JOIN conversations sc ON sc.id = i.conversation_id
         WHERE hs.run_id = $1 AND hs.owner_id = $2 AND (hs.revoked = true OR sc.deleted_at IS NOT NULL OR (sc.id <> $3 AND sc.recall_eligible = false)) LIMIT 1`, [runId, owner, run.conversation_id]);
       if (revoked.rows.length) throw new Conflict('Selected history is no longer eligible for reuse');
+      for (const claim of claims) {
+        if (!claim.claim.trim() || !claim.evidenceIds.length || new Set(claim.evidenceIds).size !== claim.evidenceIds.length) throw new Conflict('Invalid partial finding');
+        for (const evidenceId of claim.evidenceIds) {
+          const evidence = await tx.query('SELECT id FROM evidence_observations WHERE id = $1 AND owner_id = $2 AND run_id = $3', [evidenceId, owner, runId]);
+          if (!evidence.rows.length) throw new Conflict('Partial finding cites evidence outside this run');
+        }
+        const claimId = randomUUID();
+        await tx.query('INSERT INTO answer_claims (id, run_id, owner_id, claim) VALUES ($1, $2, $3, $4)', [claimId, runId, owner, claim.claim]);
+        for (const evidenceId of claim.evidenceIds) await tx.query('INSERT INTO claim_evidence (claim_id, evidence_id) VALUES ($1, $2)', [claimId, evidenceId]);
+      }
       const sequence = await tx.query<{ value: number }>('UPDATE owner_sequences SET value = value + 1 WHERE owner_id = $1 RETURNING value', [owner]);
       await tx.query("INSERT INTO messages (id, conversation_id, owner_id, turn_id, role, content, ordinal) VALUES ($1, $2, $3, $4, 'assistant', $5, $6)", [randomUUID(), run.conversation_id, owner, run.turn_id, content, sequence.rows[0].value]);
       await tx.query("UPDATE runs SET status = 'incomplete' WHERE id = $1 AND owner_id = $2", [runId, owner]);

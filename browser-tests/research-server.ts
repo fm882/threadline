@@ -48,6 +48,9 @@ const run = async (owner: string, runId: string) => {
   if (deadlineFixture) {
     await store.beginAttempt(owner, runId, 2, 3_000);
     await store.setRequestedSubjects(owner, runId, ['Acme CRM', 'Northstar CRM']);
+    const searchId = await store.startSearch(owner, runId, 'Acme CRM pricing');
+    await store.finishSearch(owner, runId, searchId, 'completed');
+    await store.registerEvidence(owner, runId, [{ url: 'https://example.com/acme', title: 'Acme CRM pricing', excerpt: 'Acme CRM Growth costs USD 12 per seat monthly before tax.', observedAt: new Date().toISOString(), provider: 'tavily', representation: 'search_snippet' }], searchId);
   }
   const client = researchClient({ baseURL: process.env.INFERENCE_BASE_URL!, apiKey: 'fixture', model: 'chat-main-v1', searchKey: 'fixture', owner, runId, store, verifyCurrent: record.verify_current,
     search: async query => {

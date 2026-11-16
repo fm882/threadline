@@ -135,8 +135,14 @@ try {
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('[deadline fixture] Research current CRM pricing.');
   await page.getByRole('button', { name: 'Send' }).click();
-  try { await page.getByText('Acme CRM, Northstar CRM', { exact: false }).waitFor({ timeout: 15000 }); }
+  try { await page.getByText('Northstar CRM', { exact: false }).waitFor({ timeout: 15000 }); }
   catch { throw new Error(`Deadline run did not list its named subject gaps: ${await page.locator('.transcript').innerText()} | ${await page.locator('.composer').innerText()}`); }
+  const partialArticle = page.locator('article.assistant').last();
+  assert.match(await partialArticle.innerText(), /Partial source observations/);
+  assert.match(await partialArticle.innerText(), /Northstar CRM/);
+  await partialArticle.getByRole('button', { name: 'Source', exact: true }).click();
+  await page.getByText('Acme CRM Growth costs USD 12 per seat monthly', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Close source details' }).click();
   await page.getByRole('button', { name: 'Continue research' }).click();
   await page.getByText('Continuation completed with a fresh time limit.', { exact: true }).waitFor({ timeout: 15000 });
   const continuationLink = await page.evaluate(async () => {

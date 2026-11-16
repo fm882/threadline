@@ -296,7 +296,7 @@ A research run reaches its deadline or loses a dependency after finding some sup
 
 ### Acceptance criteria
 
-- [ ] The configured deadline and shared call/query/token/attempt limits stop new work and produce supported partial findings when available.
+- [x] The configured deadline and shared call/query/token/attempt limits stop new work and produce supported partial findings when available. Timed-out runs retain subject-matched source observations with citations and name unmatched subjects as gaps; source excerpts are explicitly not presented as validated facts. See [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [x] Every requested subject is represented by a finding or named gap; absent supported findings result in an honest failure/limitation rather than invented partial content. Completed comparisons enforce the union of planned and final subjects, and incomplete runs name persisted subjects as gaps. See [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [x] The user explicitly continues through normal authorized admission, producing a new run linked to the incomplete one with a fresh time and budget. Browser/API and idempotency evidence: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [x] Continuation does not rewrite the prior final answer or silently reset its deadline. Duplicate continuation submissions remain idempotent. Store and API tests: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).

@@ -94,7 +94,7 @@ it('terminates a run at the deadline even when a client ignores abort', async ()
     emit('late'); finish('late response');
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(chunks).toEqual([]);
-    expect((await store.messages('alice', conversation)).map(m => m.content)).toEqual(['hello', 'Research reached its time limit before a verified answer was ready. No supported partial findings are available yet. Continue research with a fresh time limit, or narrow the question.']);
+    expect((await store.messages('alice', conversation)).map(m => m.content)).toEqual(['hello', 'Research reached its time limit before a verified answer was ready. No supported partial source observations were available. These source excerpts establish what search returned, not that the underlying claims are true. Continue research with a fresh time limit, or narrow the question.']);
   } finally { await db.close(); }
 });
 
