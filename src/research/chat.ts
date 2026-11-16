@@ -8,14 +8,13 @@ import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 import { requiresCurrentVerification } from './freshness.js';
 import { prepareExactRecall } from '../history/recall.js';
 import { historicalContextPrompt, prepareHistoricalContext } from '../history/context.js';
+import { compactChatMessages, ContextBudgetError } from './context-budget.js';
 import { z } from 'zod';
 
 export type ChatMessage = { role: string; content: string };
 export type ChatOutput = string | { content: string; claims: { claim: string; evidenceIds: string[] }[]; comparisons?: ComparisonClaim[] };
 export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => Promise<ChatOutput>;
 
-// Character limit is deliberately conservative until model-specific token counting is introduced.
-export const MAX_CONTEXT_CHARS = 16_000;
 export const MAX_INPUT_CHARS = 8_000;
 
 export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false): ChatClient {
@@ -75,7 +74,7 @@ export async function checkpointAnswer(checkpointer: SqliteSaver, runId: string)
 
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<ChatOutput>() });
 
-export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000, retrieve?: HistoryRetriever) {
+export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000, retrieve?: HistoryRetriever, contextTokens = 32_000) {
   return async (owner: string, run: string, signal?: AbortSignal) => {
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
@@ -96,6 +95,10 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       }
       const continuity = prior.slice(-8).map(message => message.content).join('\n').slice(-8_000);
       const reference = await prepareHistoricalContext(store, owner, run, current.content, new Date(record.created_at), record.timezone, continuity, retrieve);
+      if (reference.kind === 'resolved') {
+        trace.stage(reference.coverage === 'complete' ? 'history_coverage_complete' : 'incomplete_coverage');
+        trace.decision('history_coverage', { complete: reference.coverage === 'complete' });
+      }
       if (reference.kind === 'clarification_needed') {
         signal?.throwIfAborted();
         if (await store.publish(owner, run, `${reference.question}\n[reference:${reference.snapshotId}]`)) trace.stage('publication');
@@ -112,14 +115,11 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         return;
       }
       const selected: ChatMessage[] = [];
-      let size = Buffer.byteLength(current.content);
       // Select whole prior user/assistant pairs from newest to oldest.
       for (let i = prior.length - 1; i > 0; i -= 2) {
         const user = prior[i - 1], assistant = prior[i];
         if (user.role !== 'user' || assistant.role !== 'assistant') break;
-        if (size + Buffer.byteLength(user.content) + Buffer.byteLength(assistant.content) > MAX_CONTEXT_CHARS) break;
         selected.unshift({ role: user.role, content: user.content }, { role: assistant.role, content: assistant.content });
-        size += Buffer.byteLength(user.content) + Buffer.byteLength(assistant.content);
       }
       let referenceSnapshotId: string | null = null;
       if (reference.kind === 'resolved') {
@@ -132,11 +132,15 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         const coverage = snapshot.coverage === 'complete' && reference.coverage === 'complete' ? 'complete' : 'incomplete';
         const context = historicalContextPrompt({ ...source, score: 0 }, coverage, reference.discussionDate, reference.comparisonDate);
         selected.push({ role: 'system', content: context });
-        size += Buffer.byteLength(context);
+        if (coverage === 'incomplete') trace.stage('incomplete_coverage');
         referenceSnapshotId = reference.snapshotId;
       }
       selected.push({ role: 'user', content: current.content });
-      if (size > MAX_CONTEXT_CHARS || current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
+      if (current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
+      const compiled = compactChatMessages(selected, { contextTokens, outputTokens: 1024, safetyTokens: 2048 }, [{ systemReserve: 'Web search availability and safety instructions', toolSchemaReserve: 512 }]);
+      if (compiled.removedPairs) trace.stage('compaction');
+      trace.decision('context_budget', { removedPairs: compiled.removedPairs, inputTokens: compiled.inputTokens, availableTokens: compiled.availableTokens });
+      selected.splice(0, selected.length, ...compiled.messages);
       signal?.throwIfAborted();
       if (!await store.beginAttempt(owner, run)) {
         await store.fail(owner, run, 'The run could not be resumed within its attempt limit. Please start a new turn.');
@@ -151,10 +155,15 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       const answer = typeof output.answer === 'string' ? output.answer : output.answer.content;
       const published = referenceSnapshotId ? `${answer}\n[reference:${referenceSnapshotId}]` : answer;
       if (await store.publish(owner, run, published, typeof output.answer === 'string' ? [] : output.answer.claims, typeof output.answer === 'string' ? [] : output.answer.comparisons || [])) trace.stage('publication');
-    } catch {
+    } catch (error) {
       trace.stage('failure');
       // Never persist raw provider errors, which may include credentials or request content.
-      if (!signal?.aborted) await store.fail(owner, run, 'The chat service failed or timed out. Check gateway configuration and try again.');
+      if (!signal?.aborted) {
+        if (error instanceof ContextBudgetError) {
+          if (await store.publish(owner, run, 'The requested history and instructions exceed the configured context limit. Narrow the topic or date so I can keep the original evidence and answer safely.')) trace.stage('publication');
+        }
+        else await store.fail(owner, run, 'The chat service failed or timed out. Check gateway configuration and try again.');
+      }
     } finally { trace.finish(); }
   };
 }

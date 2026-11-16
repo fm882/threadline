@@ -41,6 +41,22 @@ it('resolves an explicit cross-conversation shortlist and gives only original-ba
   } finally { saver.db.close(); await db.close(); }
 });
 
+it('publishes a visible context limitation instead of sending an oversized original to the model', async () => {
+  const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
+  try {
+    const store = new Store(db); await store.initialize();
+    const source = await store.createConversation('alice');
+    const original = await store.admit('alice', source, 'large-source', 'We shortlisted CRM products.');
+    await store.publish('alice', original, `Original source record: ${'product evidence '.repeat(300)}`);
+    const current = await store.createConversation('alice');
+    const run = await store.admit('alice', current, 'bounded-query', 'What were the CRM products we shortlisted before?');
+    let modelCalls = 0;
+    await createChatRunner(store, saver, async () => { modelCalls++; return 'unsupported answer'; }, () => {}, undefined, 60_000, undefined, 4000)('alice', run);
+    expect(modelCalls).toBe(0);
+    expect((await store.messages('alice', current)).at(-1)?.content).toContain('exceed the configured context limit');
+  } finally { saver.db.close(); await db.close(); }
+});
+
 it('clarifies competing discussions and resolves the user choice in the next authorized turn', async () => {
   const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
   try {

@@ -21,7 +21,7 @@ export function gatewayConfig(env: NodeJS.ProcessEnv, keyPath = '.data/litellm.k
       ? 'Set a valid INFERENCE_BASE_URL without credentials or query parameters.'
       : !local && url.protocol !== 'https:' ? 'Remote inference requires an HTTPS endpoint.'
       : keyError || (!key ? 'Start the local gateway or set INFERENCE_API_KEY.' : null);
-  return { base: base.replace(/\/$/, ''), key, model, error };
+  return { base: base.replace(/\/$/, ''), key, model, contextTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.contextTokens : 32_000, maxOutputTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.maxOutputTokens : 1024, error };
 }
 
 export function gatewayReadiness(config: ReturnType<typeof gatewayConfig>, request: typeof fetch = fetch) {
