@@ -25,7 +25,7 @@ Across the four runs, p95 ranges were 65.94â€“71.05 ms for admission, 4,702.72â€
 
 ## Coverage limits
 
-Slow-consumer delivery, reconnect replay, concurrent indexing, a dependency failure, and a hard process crash/restart are covered during these local evaluations. The crash/restart uses a separate file-backed app store and gateway; it does not kill the server handling the 100-client workload or test shared-database multi-process contention. All four samples passed harness acceptance: 100 initial clients, 100 reconnects, 9 successful runs, 1 injected outage, zero connection errors, 259 indexed messages, zero pending backlog, slow-consumer completion, and one recovered logical answer. The deterministic browser quality gate is 3/3 assignment scenarios passing, including all five CRM shortlist subjects with current fixture citations and explicit unsupported-history handling. Fixture prices and provider quality remain unevaluated live. A provider cost gate remains unset because no live batch usage or charge has been measured; agree a spend cap before running that batch. The prepared bounded live-provider protocol and proposed baseline gates are in [the live evaluation runbook](PHASE12_LIVE_EVALUATION.md); neither has been executed or verified against a provider.
+Slow-consumer delivery, reconnect replay, concurrent indexing, a dependency failure, and a hard process crash/restart are covered during these local evaluations. The crash/restart uses a separate file-backed app store and gateway; it does not kill the server handling the 100-client workload or test shared-database multi-process contention. All four samples passed harness acceptance: 100 initial clients, 100 reconnects, 9 successful runs, 1 injected outage, zero connection errors, 259 indexed messages, zero pending backlog, slow-consumer completion, and one recovered logical answer. The deterministic browser quality gate is 3/3 assignment scenarios passing, including all five CRM shortlist subjects with current fixture citations and explicit unsupported-history handling. A separate live batch completed 3/3 scenarios with real search and cited findings, while leaving missing historical baselines unresolved; actual provider billing remains unreconciled. See [the live evaluation report](PHASE12_LIVE_EVALUATION.md) for the human rubric, supplementary judge disagreement, usage totals, and limits.
 
 ## Assignment browser scenarios
 
@@ -35,7 +35,7 @@ Slow-consumer delivery, reconnect replay, concurrent indexing, a dependency fail
 - The 3 November question opens the source discussion with the original Postgres question and answer, verifies current Neon and Supabase evidence, and leaves historical correctness unresolved because no observations were attached then.
 - The last-Tuesday Postgres question retrieves its intended discussion, cites the current Neon and Supabase fixture observations, and labels the earlier price baseline unsupported.
 
-These tests verify retrieval, evidence linking, and honest comparison behavior. The generated prices, releases, and search observations are fixtures; they are not live provider research or claims about current vendor offerings.
+These tests verify retrieval, evidence linking, and honest comparison behavior. The generated prices, releases, and search observations are fixtures; they are not live provider research or claims about current vendor offerings. The separate live-provider result is summarized in [the live evaluation report](PHASE12_LIVE_EVALUATION.md).
 
 ## Reproduction checks
 

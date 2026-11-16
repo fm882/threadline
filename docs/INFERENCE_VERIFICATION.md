@@ -85,8 +85,8 @@ Use named checks to avoid repeating unrelated billable calls while debugging. Re
 ## Not established yet
 
 - Live charges have not been reconciled; the successful check reports token usage but not an AWS bill.
-- No full live browser/LangGraph quality run or adversarial schema evaluation against a provider. The bounded `researchClient` tool-result continuation check is documented in [Phase 2 verification](PHASE2_VERIFICATION.md); deterministic cancellation/recovery fixtures are local tests.
-- No live Tavily search was executed; `TAVILY_API_KEY` is not configured in this environment.
+- The completed live browser/LangGraph assignment batch and its quality limitations are documented in [Phase 12 live evaluation](PHASE12_LIVE_EVALUATION.md). It is a small scenario sample, not an adversarial schema evaluation or broad research benchmark. The bounded `researchClient` tool-result continuation check is documented in [Phase 2 verification](PHASE2_VERIFICATION.md); deterministic cancellation/recovery fixtures are local tests.
+- Live Tavily Basic search was exercised in the Phase 12 batch. Provider search billing has not been reconciled.
 - No LangSmith export verification; real-user trace content remains disabled/redacted by policy.
 - No database/vector-index integration, retrieval recall evaluation, or long-context test.
 - No hosted capacity or provider latency load test. The separate 100-client/10-turn local synthetic measurement is in [Phase 12 local evaluation](PHASE12_LOCAL_EVALUATION.md).

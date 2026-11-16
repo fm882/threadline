@@ -1,39 +1,36 @@
 # Phase 12 bounded live-provider evaluation
 
-## Status
+## Status and evidence
 
-Prepared run protocol; **not executed**. No live model or search request, provider usage record, or bill has been collected for this evaluation. Do not attest the fast model as a fallback or mark the live Phase 12 criteria complete until a spend allocation is agreed and the evidence below is recorded.
+The bounded live batch completed on 2026-11-16 against source revision `51a470deacc44210dc71833da7dbb13d0b5a7c60`. The sanitized run artifact is `.data/live-research-evaluation-1794856431206.json` (ignored local data; do not commit). All three scenarios completed with nonempty cited answers. The application reported `all_scenarios_completed`; this is provider and harness completion, not a claim that every research question was resolved.
 
-The existing `test:research-browser` harness is deterministic and fixture-backed. It verifies application behavior but cannot establish live provider compatibility, research quality, or cost. The separate `fast-research-contract` verifier makes two billable model requests and uses synthetic evidence; it verifies the route contract, not the quality of web research.
+The application used LiteLLM 1.103.2 and Node 22.23.2. Main chat used Token Harbor `deepseek-v4.1-flash:free` through `chat-main-v1`; the configured retry fallback was AWS Bedrock `bedrock/converse/us.amazon.nova-micro-v1:0` through `chat-fast-v1`. Embeddings and reranking were not exercised by these scenarios. Tavily Basic performed live searches. The route configuration SHA-256 was `92eb2b6bcc7c7b75e2e768d757efe589e29ecadb655fc45dfb06ebfed3fef86d`.
 
-## Bounded run order
+| Scenario | Status | Model requests | Searches | Prompt bytes | Answer chars | Citations | Comparison result |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| CRM shortlist | Completed | 2 | 1 | 15,789 | 5,785 | 5 | Five subjects marked `historical_support_missing` |
+| Dated Postgres question | Completed | 2 | 2 | 20,967 | 6,280 | 9 | Neon and Supabase `inconclusive` |
+| Last-Tuesday Postgres question | Completed | 2 | 2 | 20,924 | 5,567 | 8 | Neon Launch and Supabase Pro `inconclusive` |
+| **Total** | **3/3 completed** | **6** | **5** | **57,680** | **17,632** | **22** | Historical outcomes unresolved where source baselines were absent |
 
-1. Agree a hard experiment allocation covering both model inference and Tavily search. This allocation is a project authorization ceiling, not an account-level provider billing limit. Confirm that the configured account, region, and gateway route are the intended ones.
-2. Run `node scripts/verify-inference.mjs fast-research-contract` against the configured LiteLLM gateway. On success, the script sends two model requests, with no application-level retries, no search calls, and synthetic evidence. A gateway may retry internally, so capture its retry behavior. Record both request usage objects, response model aliases, gateway route/config revision, configured model IDs, region, and timestamp. If either call fails or the response alias/configuration cannot be tied to the intended provider route, stop before the research scenarios and do not attest fallback capability.
-3. Run the three assignment scenarios through an isolated application data directory with real configured search and inference providers. Reuse the documented CRM shortlist, 3 November Postgres, and last-Tuesday Postgres prompts from [the local evaluation report](PHASE12_LOCAL_EVALUATION.md). Cap each scenario at four model calls, two searches, 128 KiB cumulative serialized prompt bytes, and the existing run deadline. Do not retry a scenario or resume it without counting that work against the same allocation. The planned maximum is 12 scenario model calls and 6 Basic searches, in addition to the two route-check model calls.
-4. Stop starting work when the allocation is reached or the planned request/search maxima are reached. Preserve partial results and report any unrun scenario as a gap. Reconcile gateway usage with provider-side usage/billing after provider records settle; do not infer billed cost from model aliases or latency.
+The final batch reported 12,567 prompt and 10,889 completion tokens across six model requests. All six used the main route; fallback was not invoked. Search cache was bypassed. Per-run application caps were four model requests, two searches, and 128,000 serialized prompt bytes; every scenario stayed below them. Earlier exploratory retries had transient provider and output-format failures and are outside these final-batch totals. They were user-authorized; no aggregate billed amount is inferred from the final report.
 
-The run is bounded by application call/query/prompt limits and a human-approved allocation, but those controls cannot prevent provider-side charges outside the observed gateway request path. Search cache state and cache hits must be recorded; a cache hit does not count as a provider search request.
+## Quality review
 
-## Required evidence per run
+Manual review recommends **pass with scope limits** for the bounded baseline. Current factual claims in the final report have registered citations, the requested products remain represented, and unsupported historical baselines are labeled unresolved. The CRM scenario has source-coverage gaps for Acme CRM and Northstar CRM, and some price snippets omit currency or conflict across sources. The Postgres scenarios do not have source observations from the original conversations, so historical price or feature changes remain inconclusive. Search snippets are not a full-page audit, and same-day observations do not establish what was true earlier.
 
-Record in a sanitized report, without credentials or raw prompts beyond the fixed public assignment prompts:
+An independent Nova Micro model judge returned `pass_with_limitations`, but labeled historical safety as failed because original baselines were absent. Manual review treats that as a judge disagreement: the application explicitly leaves those comparisons unsupported instead of asserting a change. The judge is supplementary and cannot override missing or mismatched source evidence.
 
-- UTC start/end time; source revision; runtime and dependency versions.
-- LiteLLM route/config revision, confirmation that the intended provider account/region was used (without storing account identifiers), configured aliases and model IDs, and response model fields. A response alias alone is not proof of backend identity.
-- Per-request input/output token usage as returned by the gateway, call count, retries, and any missing usage fields. Per search: provider, search depth, count, cache status, and credits if exposed.
-- Provider billing/usage reconciliation and its observation timestamp. If unavailable, mark actual charge **unknown** and retain only a labeled estimate with the pricing source, region/tier assumptions, and excluded charges.
-- Each scenario's completion status, requested-subject coverage, citations, source observation timestamps and representations, numeric price dimensions, historical-support outcome, uncertainty, and any safety or schema failure.
-- Human-grounded rubric results and an independent model-judge assessment. Judges are supplementary and cannot override missing/mismatched source evidence.
+## Regression gates
 
-Do not store API keys, account identifiers, private user content, or unredacted provider headers in the report. Keep detailed local evidence in ignored `.data/` storage; only publish sanitized aggregate results.
+Use this batch as a narrow baseline for the same prompts, routes, model IDs, configuration, region, search depth, and cache policy. A change to those conditions requires a new baseline.
 
-## Baseline regression gates
+- **Research quality:** human review remains primary. Require all requested subjects to have a cited finding or an explicit gap, factual claims to map to authorized evidence, price units and qualifications to be clear, and unsupported history to remain unresolved. Any invented citation, unsupported historical change, missing subject, or silently omitted scenario fails.
+- **Usage:** retain the per-run limits of at most four model requests, two searches, and 128,000 prompt bytes. For a comparable three-scenario batch, flag a greater-than-20% increase in normalized model tokens or search requests per completed scenario for review, after accounting for documented route, model, prompt, or provider changes. These are usage proxies, not dollar-cost gates.
+- **Billing:** actual Token Harbor, Tavily, and AWS charges remain unreconciled and are recorded as unknown. The user authorized paid checks and said available credits are sufficient, so missing billing reconciliation is not a blocker to completing this evaluation. Do not claim a monetary-cost pass or derive actual charges from aliases, token counts, or latency.
 
-Treat the first complete bounded run as a baseline, not as proof of broadly representative quality. Gate the next comparable run against the same prompts, route, model/configuration revision, region, cache policy, and limits:
+## Reproduction and limits
 
-- **Research quality:** all five CRM subjects and both Postgres products have a finding or explicit gap; every factual current claim has a matching authorized citation; prices retain currency, plan, billing period, and material qualifiers; unsupported historical baselines remain explicitly unresolved. Any invented citation, unsupported historical change, missing requested subject, or silently omitted scenario fails the gate. Keep human scoring primary; report model-judge scores separately.
-- **Usage and cost:** no run exceeds the approved allocation or the 14 model-request / 6 search-request maxima. Record total and per-scenario model tokens, search credits, and reconciled charge. Once a reconciled baseline exists, flag a greater-than-20% increase in normalized charge per completed scenario or model input/output tokens per completed scenario for review; fail only after accounting for a documented route, model, prompt, or provider-price change. Unknown actual charges cannot pass a cost regression gate.
-- **Comparability:** a change in route, model ID, region, prompt/schema revision, search depth, or cache policy requires a new baseline; do not compare its raw cost or quality score as if the workload were unchanged.
+The live run used the existing three assignment prompts documented in [the local evaluation report](PHASE12_LOCAL_EVALUATION.md), an isolated application data directory, real Tavily Basic search, and the configured LiteLLM routes. The report contains no credentials or private conversation input. Re-run `npm run test:research-live` only after configuring local provider keys and gateway access; each run consumes provider usage.
 
-The 20% cost tripwire is a review threshold, not a provider price guarantee. Tighten or revise it only after repeated reconciled runs show normal variance. Live quality/cost gates remain unset until the first approved run supplies the missing baseline.
+Earlier exploratory retries are not part of the six-request/five-search final batch. Provider-side billing has not been reconciled. This is a small assignment-specific quality sample, not a broad research benchmark, source-page audit, hosted capacity test, or guarantee of future provider behavior.
