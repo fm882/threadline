@@ -1,6 +1,6 @@
 # Time-aware research agent
 
-This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Local browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. Main chat routes through Token Harbor's `deepseek-v4.1-flash:free`; the verified Nova Micro fallback and Bedrock embedding/rerank routes remain available. Live research results and remaining quality/cost limits are recorded in [Phase 12 live evaluation](docs/PHASE12_LIVE_EVALUATION.md). See also the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
+This repository contains the completed local implementation and evaluation described in [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. Main chat routes through Token Harbor's `deepseek-v4.1-flash:free`; the verified Nova Micro fallback and Bedrock embedding/rerank routes remain available. Live research results and their quality and billing limits are recorded in [Phase 12 live evaluation](docs/PHASE12_LIVE_EVALUATION.md). See also the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
 
 ## Local development
 

@@ -40,7 +40,7 @@ These tests verify retrieval, evidence linking, and honest comparison behavior. 
 ## Reproduction checks
 
 - `npm run typecheck` — passed.
-- `npm test` — 29 files, 153 tests passed. The suite includes ownership isolation, invalid and cross-run citation rejection, concurrent duplicate-publication protection, incompatible-vector filtering, required-subject coverage, recall deletion races, process-restart recovery, and fallback capability rejection/readiness/rebudgeting under a mock gateway.
+- `npm test` — 29 files, 157 tests passed on 2026-11-17. The suite includes ownership isolation, invalid and cross-run citation rejection, concurrent duplicate-publication protection, incompatible-vector filtering, required-subject coverage, recall deletion races, process-restart recovery, and fallback capability rejection/readiness/rebudgeting under a mock gateway.
 - `npm run test:research-browser` — passed, including the three assignment scenarios above and the existing source-inspection/restart/continuation flow.
 - Startup smoke check with isolated temporary storage and an intentionally unavailable local gateway — Vite and the API started; `/health/live` returned 200 and `/health/ready` returned 503 with an actionable “Start the gateway and check INFERENCE_BASE_URL” error. No inference or search call was made.
 - Clean-start prerequisites and credentials are documented in [README](../README.md), [.env.example](../.env.example), and [gateway setup](../infra/litellm/README.md). Research fixtures are enabled only by the dedicated browser harness and a separate temporary data directory; the application runtime does not substitute fixtures for a missing provider.

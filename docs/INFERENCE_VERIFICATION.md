@@ -2,7 +2,7 @@
 
 Verified on **2026-11-15**, using the installed AWS CLI, an existing authorized profile, and a loopback LiteLLM process. The AWS source region was `us-east-1`. No cloud resources, IAM policies, subscriptions or payment settings were deliberately created or changed. Model calls are billable; exact AWS charges were not measured.
 
-This report covers the local LiteLLM/Bedrock inference boundary only. The application, LangGraph workflow, temporal retrieval, source validation, persistence, and synthetic load evaluation have separate evidence; this report does not establish their correctness or hosted capacity. See [Phase 12 local evaluation](PHASE12_LOCAL_EVALUATION.md).
+This report covers local LiteLLM provider-boundary checks for Token Harbor and AWS Bedrock. The application, LangGraph workflow, temporal retrieval, source validation, persistence, and synthetic load evaluation have separate evidence; provider smoke checks do not establish hosted capacity. See [Phase 12 local evaluation](PHASE12_LOCAL_EVALUATION.md).
 
 ## Environment
 
@@ -48,7 +48,7 @@ The initial candidate routes were:
 
 Those four checks returned HTTP 403 with `INVALID_PAYMENT_INSTRUMENT`, indicating an account/Marketplace prerequisite prevented model access. This is not evidence that LangGraph, the OpenAI-compatible protocol, or LiteLLM cannot support Claude. Billing/subscription changes were not attempted.
 
-The local defaults now use the accessible Nova models. Claude routes remain commented options in `.env.example`; they must be retested after account access is resolved. The Nova choice is an accessible development baseline, not a research-quality ranking against Claude or other models.
+At the time of that earlier check, the local defaults used the accessible Nova models. Claude routes were not enabled because the tested account lacked access. Main chat now uses the separately configured Token Harbor route; this does not establish a comparative quality ranking.
 
 ## Live follow-up: fast route and current gateway
 
