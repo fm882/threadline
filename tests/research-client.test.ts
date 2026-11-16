@@ -380,7 +380,7 @@ it('rejects a research draft with an absent or invalid claim classification', as
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 
-it('stops before continuation when registered search evidence cannot fit the prompt envelope', async () => {
+it('stops after bounded follow-ups when registered search evidence cannot fit the prompt envelope', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
   const conversation = await store.createConversation('alice');
   const runId = await store.admit('alice', conversation, 'bounded-tool-result', 'current information');
@@ -395,11 +395,11 @@ it('stops before continuation when registered search evidence cannot fit the pro
   server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   try {
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
-    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, verifyCurrent: true, contextTokens: 8000,
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, verifyCurrent: true, contextTokens: 16_000,
       search: async () => [{ url: 'https://example.com/', title: 'Large source', excerpt: `Supported evidence ${'details '.repeat(400)}`, observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
     await expect(client([{ role: 'user', content: 'current information' }], () => {}, AbortSignal.timeout(5000))).rejects.toBeInstanceOf(ContextBudgetError);
-    expect(requests).toBe(1);
-    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing']);
+    expect(requests).toBe(3);
+    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing', 'reviewing', 'reviewing']);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 

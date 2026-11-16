@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 const mainSchema = z.object({
   model: z.string().min(1), streaming: z.literal(true),
-  contextTokens: z.number().int().min(32_000), maxOutputTokens: z.literal(4096),
+  contextTokens: z.number().int().min(32_000), maxOutputTokens: z.literal(8192),
 }).strict();
 const fallbackSchema = z.object({
   model: z.string().min(1), streaming: z.literal(true), toolCalls: z.literal(true), promptedJson: z.literal(true),
