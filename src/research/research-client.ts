@@ -267,16 +267,15 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     if (prompted && typeof prompted === 'object' && !Array.isArray(prompted)) {
       const record = prompted as Record<string, unknown>;
       if (Array.isArray(record.comparisons)) {
+        const declaredLabels = Array.isArray(record.requestedSubjects) ? record.requestedSubjects.filter((value): value is string => typeof value === 'string') : [];
+        const canonicalLabels = declaredLabels.length ? declaredLabels : requiredSubjects;
         record.comparisons = record.comparisons.map(value => {
           if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
           const comparison = value as Record<string, unknown>;
           if (typeof comparison.subject === 'string' && requiredSubjects.length) {
             const alias = comparison.subject.trim().toLocaleLowerCase();
-            const matches = requiredSubjects.filter(subject => {
-              const canonical = subject.trim().toLocaleLowerCase();
-              const anchor = subjectAnchor(alias);
-              return canonical === alias || canonical === anchor || canonical.startsWith(`${alias} `) || alias.startsWith(`${canonical} `);
-            });
+            const anchor = subjectAnchor(alias);
+            const matches = canonicalLabels.filter(subject => subjectAnchor(subject).toLocaleLowerCase() === anchor.toLocaleLowerCase());
             if (matches.length === 1) comparison.subject = matches[0];
           }
           for (const key of ['priorDimensions', 'currentDimensions']) {
@@ -295,7 +294,9 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     answer.claims = answer.claims.filter(claim => claim.evidenceIds.length > 0);
     if (!answer.claims.length && !answer.comparisons.length) throw new Error('Research response contained no evidence-backed claims or qualified comparisons');
     if ((hasHistoricalContext && isHistoricalComparisonRequest(currentQuestion)) || userReportedQuote) {
-      const requested = requiredSubjects.length ? requiredSubjects : answer.requestedSubjects;
+      const requested = answer.requestedSubjects.length ? answer.requestedSubjects : requiredSubjects;
+      const declaredAnchors = new Set(requested.map(subjectAnchor).map(subject => subject.toLocaleLowerCase()));
+      if (requiredSubjects.some(subject => !declaredAnchors.has(subject.toLocaleLowerCase()))) throw new Error('Every requested comparison subject must be declared in the final answer');
       validateSubjectCoverage(requested, answer.comparisons);
     }
     if ([...answer.claims.map(claim => claim.claim), ...answer.comparisons.map(comparison => comparison.statement), answer.uncertainty].some(text => /\[source:/i.test(text))) throw new Error('Citation markup must be generated from validated evidence');
