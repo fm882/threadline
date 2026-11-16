@@ -1,10 +1,10 @@
 # Time-Aware Research Agent — detailed architecture
 
-> **Status:** local-first architecture and implementation specification. Local LiteLLM configuration and bounded inference verification helpers exist; the chat application and load/quality benchmarks are not implemented. Cloud deployment, production identity, hosting selection and multi-replica operation are deferred. Numerical budgets below are starting hypotheses, not measured results.
+> **Status:** implemented local-first application and architecture record. The Node/TypeScript chat UI/API, bounded research and citations, durable history/recall, continuation, and synthetic local evaluation are implemented. Phase 10 context fallback/decomposition and parts of the Phase 12 evidence gate remain open; see the checked plan for exact status. The 100-client load run is synthetic, not hosted capacity, and provider quality/cost gates remain uncalibrated. Cloud deployment, production identity, hosting selection, and multi-replica operation are deferred.
 >
 > **Decision:** Node/TypeScript + Hono + LangGraph + LangChain + LangSmith. All chat, embedding, and reranking inference initially runs on AWS Bedrock through a local LiteLLM gateway (a remote gateway remains an optional future connection mode). The application uses OpenAI-compatible chat/embedding clients; reranking has a separate gateway contract.
 >
-> This is the detailed engineering document. The submission still needs a separate, one-page `DESIGN.md`, distilled from the implementation and measured results.
+> This is the detailed engineering document. [DESIGN.md](DESIGN.md) is the concise, one-page summary of implemented behavior, local measurements, tradeoffs, and future work.
 
 ## Contents
 
@@ -1253,7 +1253,7 @@ Define backup retention and restore-time deletion replay. External trace deletio
 
 ### 21.1 Local startup — current scope
 
-The completed chat application must satisfy `npm install && npm run dev`; it is not yet implemented. The immediately runnable artifacts are [the gateway config](infra/litellm/config.yaml), [local instructions](infra/litellm/README.md), [launcher](scripts/start-gateway.mjs), and [inference verifier](scripts/verify-inference.mjs).
+The local chat application starts with `npm install && npm run dev` when the documented inference gateway is available. The API and browser app start independently of provider readiness and report actionable readiness failures; current research requires configured search. See the [clean-start walkthrough](README.md), [gateway config](infra/litellm/config.yaml), [local instructions](infra/litellm/README.md), [launcher](scripts/start-gateway.mjs), and [inference verifier](scripts/verify-inference.mjs).
 
 Run `node scripts/start-gateway.mjs` with an existing authorized AWS CLI profile selected in the environment or ignored `.env`. It binds LiteLLM to `127.0.0.1`, generates a local key in `.data/litellm.key`, and uses existing AWS credentials without copying them into the repository. In another terminal, `node scripts/verify-inference.mjs` performs bounded, billable checks on synthetic text. No hosting, managed database, IAM, model subscription or billing changes are made.
 

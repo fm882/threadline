@@ -2,7 +2,7 @@
 
 Verified on **2026-11-15**, using the installed AWS CLI, an existing authorized profile, and a loopback LiteLLM process. The AWS source region was `us-east-1`. No cloud resources, IAM policies, subscriptions or payment settings were deliberately created or changed. Model calls are billable; exact AWS charges were not measured.
 
-This report covers the inference boundary only. The chat UI/API, LangGraph execution, LangChain clients, temporal retrieval, source validation, persistence, load targets and quality evaluations are not implemented or validated by these checks.
+This report covers the local LiteLLM/Bedrock inference boundary only. The application, LangGraph workflow, temporal retrieval, source validation, persistence, and synthetic load evaluation have separate evidence; this report does not establish their correctness or hosted capacity. See [Phase 12 local evaluation](PHASE12_LOCAL_EVALUATION.md).
 
 ## Environment
 
@@ -61,9 +61,9 @@ Use named checks to avoid repeating unrelated billable calls while debugging. Re
 ## Not established yet
 
 - No final per-turn dollar cap or total evaluation budget has been set from these calls.
-- No full LangChain/LangGraph client compatibility run, tool-result continuation, adversarial schema suite, or cancellation/recovery test.
+- No full live browser/LangGraph quality run or adversarial schema evaluation against a provider. The bounded `researchClient` tool-result continuation check is documented in [Phase 2 verification](PHASE2_VERIFICATION.md); deterministic cancellation/recovery fixtures are local tests.
 - No web-search integration; no Tavily key or user conversation was used.
 - No LangSmith export verification; real-user trace content remains disabled/redacted by policy.
 - No database/vector-index integration, retrieval recall evaluation, or long-context test.
-- No load test at the agreed target of 100 connected clients and 10 simultaneous research turns.
+- No hosted capacity or provider latency load test. The separate 100-client/10-turn local synthetic measurement is in [Phase 12 local evaluation](PHASE12_LOCAL_EVALUATION.md).
 - No cloud deployment, production identity, managed database or multi-replica validation.

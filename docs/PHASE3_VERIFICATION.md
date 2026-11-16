@@ -1,4 +1,6 @@
-# Phase 3 verification in progress
+# Phase 3 process recovery verification
+
+Phase 3 acceptance criteria are checked in [the implementation plan](../plans/time-aware-research-agent.md#phase-3-stop-reconnect-and-recover-a-research-run). The tests demonstrate application-level single publication across local crash boundaries; they do not guarantee provider-side exactly-once billing or multi-replica recovery.
 
 `tests/process-recovery.test.ts` uses isolated file-backed PGlite and SQLite checkpoint stores with a synthetic gateway. A hard kill during the first in-flight inference request causes recovery to make a second request and publish one logical answer. This demonstrates application-level idempotency for that crash window; it does **not** imply provider-side exactly-once execution. In a real deployment both provider requests could be billed, even if only one final answer is published. Durable execution attempts are capped at two per run; checkpoint publication does not consume another inference attempt.
 

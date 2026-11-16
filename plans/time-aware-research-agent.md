@@ -278,7 +278,7 @@ A user researches a multi-product shortlist amid a large history and oversized s
 - [x] Every current model invocation counts serialized instructions, schemas, message framing, evidence, output allowance, and safety margin; no summary or repair invocations are configured.
 - [ ] A permitted smaller-context fallback triggers budget recomputation before invocation; incompatible capability assumptions prevent the fallback.
 - [x] Compaction preserves valid tool-call/result pairing, historical source provenance, and required subject coverage.
-- [ ] Subject-level work shares one parent deadline and call/token budget rather than multiplying unrestricted work.
+- [x] Subject-level work shares one parent deadline and call/token budget rather than multiplying unrestricted work. The current strategy handles the full subject set in one search plan and one synthesis response; it starts no independent per-subject calls. Shared persisted limits and exact subject coverage: [Phase 10 context budget report](../docs/PHASE10_CONTEXT_BUDGET.md) and [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [x] Context failure allows only bounded compaction; inability to fit becomes a visible limitation, clarification, or supported partial result.
 - [x] Traces record compaction and coverage decisions, and tests show exact recall still returns originals independently of model context size.
 
@@ -325,8 +325,8 @@ A reviewer starts from a clean checkout, follows the local setup, and runs the t
 - [ ] Exercise slow consumers, reconnect bursts, process crashes, and dependency outages under the local workload; report limitations rather than hiding failed targets.
 - [ ] Separately record bounded live-provider compatibility and research-quality results with model/configuration versions, usage, and cost-estimation limits. Establish the experiment spend allocation before running the paid evaluation batch.
 - [ ] Select and record numeric quality/latency/cost regression gates from baseline evidence before accepting optimization claims. Model judges supplement human-grounded numerical and historical fixtures.
-- [ ] Verify redacted external traces, credential-free shared artifacts, and successful turns during telemetry outage. Unknown costs are labeled unknown.
-- [ ] Produce the one-page design explanation from the implemented behavior and measured results, including tradeoffs and future work. Do not publish, deploy, or submit the repository as part of this phase without separate authorization.
+- [x] Verify redacted external traces, credential-free shared artifacts, and successful turns during telemetry outage. Unknown costs are labeled unknown. LangSmith request-contract/redaction and exporter-failure tests, tracked-file credential-pattern scan, and explicit unknown provider charges: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md) and [inference verification](../docs/INFERENCE_VERIFICATION.md). No live LangSmith account export was attempted.
+- [x] Produce the one-page design explanation from the implemented behavior and measured results, including tradeoffs and future work. [DESIGN.md](../DESIGN.md) reports local measurements and clearly scopes synthetic results; no publishing, deployment, or submission was performed.
 
 ## Completion boundary
 

@@ -1,15 +1,13 @@
-# Phase 1 verification in progress
+# Phase 1 local chat verification
 
-On 2026-11-15, the application `gatewayClient` sent one synthetic request through the local LiteLLM `chat-main-v1` route to the configured Bedrock Nova Pro baseline. The response matched the requested phrase and arrived in six nonempty chunks. The request used the application's 1,024-token maximum, no retries, and a 60-second deadline. This is a connectivity and streaming check, not a model-quality evaluation or an end-to-end browser demonstration. It can incur provider charges.
+Phase 1 acceptance criteria are checked in [the implementation plan](../plans/time-aware-research-agent.md#phase-1-local-chat-that-survives-restart). This report records the current local evidence and its boundaries.
 
-The automated suite uses real PGlite persistence and recorded or local synthetic provider responses. `npm test` checks owner isolation, admission idempotency, single publication, fixed cutoff, failure redaction, restart persistence, the gateway streaming contract and trace failure isolation. `npm run typecheck` checks TypeScript. These do not establish all Phase 1 acceptance criteria; the plan remains authoritative.
+## Evidence
 
-The live readiness endpoint returned HTTP 200 with the configured local gateway running and HTTP 503 with an actionable error after it stopped. The cutoff and concurrent active-turn checks use local PGlite; they do not prove multi-process PostgreSQL concurrency. LangSmith is not configured in this environment, so no live trace export has been verified.
+- The application starts with `npm install` and `npm run dev` when dependencies and gateway configuration are present. A temporary isolated-data smoke run with an unavailable gateway returned `/health/live` 200 and `/health/ready` 503 with an actionable error; it made no provider call.
+- `npm run test:browser` and `npm run test:research-browser` exercise the real browser/API/persistence path with deterministic fixtures. The latter includes restart and historical source inspection; neither substitutes fixtures into the application runtime.
+- The bounded `verify-chat.mjs` browser/HTTP checks on 2026-11-15 exercised the local LiteLLM/Bedrock route, streaming, terminal publication, and restart recovery. These are billable single-turn diagnostics, not quality tests or latency guarantees.
+- `npm test` — 29 files, 148 tests passed in the current checkout; `npm run typecheck` passed. The suite covers owner checks, idempotency, one-active-turn behavior, persistence, bounded input, cancellation, failure redaction, and telemetry failure isolation.
+- The LangSmith client contract test checks trace ID correlation and redacted content using a recorded HTTP boundary. Exporter failure does not fail the user turn. A live LangSmith account export was not attempted.
 
-On 2026-11-15, `node scripts/verify-chat.mjs` also completed one synthetic turn through the HTTP API, graph, LangChain client, local LiteLLM and configured Bedrock route. It observed streamed deltas and the terminal event, restarted the server, and verified the saved exchange. Start the gateway first; this check makes a billable provider request and uses a temporary isolated application database. It does not exercise a browser.
-
-The trace integration test runs a synthetic turn through the real LangSmith client with a recorded HTTP boundary. It verifies run-ID correlation, admission/inference/publication stages, content redaction, and failure isolation. No live LangSmith account export has been verified.
-
-On 2026-11-15, a clean temporary archive of the committed repository completed `npm install` and `npm run typecheck`. The temporary checkout was removed. This establishes dependency installation only; the browser workflow is still incomplete.
-
-On 2026-11-15, the browser test exercised `npm run dev`, conversation creation, streaming a chat response, server restart, and reopening the persisted exchange in Chrome against both a synthetic gateway and the configured local LiteLLM/Bedrock gateway. Two preliminary live assertions failed because they assumed an exact model response; the final check requires a nonempty response and verifies the same response after restart. Headless Chrome also displayed the actionable gateway-unavailable state. `npm run test:browser` runs the deterministic version; `MINMI_LIVE_BROWSER=1 npm run test:browser` sends a billable live request.
+The local database and dispatcher checks do not establish multi-process PostgreSQL concurrency. Current provider charges for historical live diagnostics were not measured; see [inference verification](INFERENCE_VERIFICATION.md). The release plan remains authoritative for later phase completion.
