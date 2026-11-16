@@ -117,6 +117,28 @@ it('does not present an unsearched model answer as current verification', async 
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 
+it('requires a web search for a historical price comparison even without explicit current-date wording', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'Has the price changed?');
+  let requests = 0, searches = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume */ }
+    requests++;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message: { role: 'assistant', content: 'The price has not changed.' }, finish_reason: 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, search: async () => { searches++; return []; } });
+    const result = await client([{ role: 'system', content: 'Authorized historical context, retrieved from original records. Coverage: complete.' }, { role: 'user', content: 'Has the price changed?' }], () => {}, AbortSignal.timeout(5000));
+    expect(typeof result === 'object' && result.content).toContain('could not verify current information');
+    expect(requests).toBe(1);
+    expect(searches).toBe(0);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
 it('routes ordinary chat without search and rejects malformed tool arguments', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
   const conversation = await store.createConversation('alice');

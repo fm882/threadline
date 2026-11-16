@@ -58,6 +58,21 @@ it('exposes citation links only for validated claims on the matching assistant m
   } finally { await db.close(); }
 });
 
+it('exposes registered comparison evidence as inspectable citations on the answer', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const sourceConversation = await store.createConversation('alice');
+    const sourceRun = await store.admit('alice', sourceConversation, 'source', 'What did we find?');
+    await store.publish('alice', sourceRun, 'Original statement.');
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'comparison', 'Is it still true?');
+    const [source] = await store.registerEvidence('alice', run, [{ url: 'https://example.com/', title: 'Current source', excerpt: 'Current evidence.', observedAt: new Date().toISOString(), provider: 'tavily', representation: 'search_snippet' }]);
+    await store.publish('alice', run, `A current finding. [source:${source.id}]`, [], [{ subject: 'The claim', attribute: 'status', outcome: 'inconclusive', statement: 'Current evidence is incomplete.', evidenceIds: [source.id], baselineOrigin: 'unsupported', historicalEvidenceIds: [] }]);
+    expect((await store.messages('alice', conversation).then(value => value.at(-1)))?.citation_ids).toEqual([source.id]);
+  } finally { await db.close(); }
+});
+
 it('rejects evidence owned by another user even if its identifier is known', async () => {
   const db = new PGlite();
   try {
