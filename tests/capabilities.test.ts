@@ -19,13 +19,13 @@ it('permits only an attested, separate, smaller-context research fallback', asyn
     chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 64_000, maxOutputTokens: 8192 },
     chatFallback: {
       model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true,
-      contextTokens: 32_000, maxOutputTokens: 4096,
+      contextTokens: 56_000, maxOutputTokens: 4096,
       verification: { streaming: 'passed', researchContract: 'passed', backendRoute, checkedAt: '2026-11-16T00:00:00.000Z' },
     },
   };
   try {
     await writeFile(path, JSON.stringify(manifest));
-    expect(loadCapabilities(path, 'chat-main-v1', 'chat-fast-v1', backendRoute)).toMatchObject({ fallback: { model: 'chat-fast-v1', contextTokens: 32_000 } });
+    expect(loadCapabilities(path, 'chat-main-v1', 'chat-fast-v1', backendRoute)).toMatchObject({ fallback: { model: 'chat-fast-v1', contextTokens: 56_000 } });
     for (const invalid of [
       { ...manifest.chatFallback, toolCalls: false },
       { ...manifest.chatFallback, promptedJson: false },
