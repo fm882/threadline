@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Store } from '../src/persistence/store.js';
 import { researchClient } from '../src/research/research-client.js';
 import { SearchUnavailable } from '../src/search/tavily.js';
+import { ContextBudgetError } from '../src/research/context-budget.js';
 
 it('performs a model tool-call and result continuation with run-owned evidence', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
@@ -236,6 +237,29 @@ it('rejects a research draft with an absent or invalid claim classification', as
     await expect(client([{ role: 'user', content: 'find details' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
     await expect(client([{ role: 'user', content: 'find details' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow();
     expect((await store.messages('alice', conversation))).toHaveLength(1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
+it('stops before continuation when registered search evidence cannot fit the prompt envelope', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'bounded-tool-result', 'current information');
+  let requests = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* consume */ }
+    requests++;
+    const message = { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current information"}' } }] };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: 'tool_calls' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, verifyCurrent: true, contextTokens: 5000,
+      search: async () => [{ url: 'https://example.com/', title: 'Large source', excerpt: `Supported evidence ${'details '.repeat(400)}`, observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    await expect(client([{ role: 'user', content: 'current information' }], () => {}, AbortSignal.timeout(5000))).rejects.toBeInstanceOf(ContextBudgetError);
+    expect(requests).toBe(1);
+    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing']);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 

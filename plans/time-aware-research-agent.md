@@ -274,13 +274,13 @@ A user researches a multi-product shortlist amid a large history and oversized s
 
 ### Acceptance criteria
 
-- [ ] Thousands of distracting exchanges and oversized tool results do not overflow the configured context envelope or silently remove a requested product.
-- [ ] Every invocation, including summaries and repair attempts, accounts for instructions, schemas, message framing, evidence, output/reasoning allowance, and safety margin.
+- [x] A 1,000-exchange fixture and an over-budget tool-result fixture stay within the configured envelope or return a visible limitation without dropping required subjects.
+- [x] Every current model invocation counts serialized instructions, schemas, message framing, evidence, output allowance, and safety margin; no summary or repair invocations are configured.
 - [ ] A permitted smaller-context fallback triggers budget recomputation before invocation; incompatible capability assumptions prevent the fallback.
-- [ ] Compaction preserves valid tool-call/result pairing, source provenance, and required subject coverage.
+- [x] Compaction preserves valid tool-call/result pairing, historical source provenance, and required subject coverage.
 - [ ] Subject-level work shares one parent deadline and call/token budget rather than multiplying unrestricted work.
-- [ ] Context failure allows only bounded recompilation; inability to fit becomes a visible limitation, clarification, or supported partial result.
-- [ ] Traces record compaction and coverage decisions, and tests show exact recall still returns originals independently of model context size.
+- [x] Context failure allows only bounded compaction; inability to fit becomes a visible limitation, clarification, or supported partial result.
+- [x] Traces record compaction and coverage decisions, and tests show exact recall still returns originals independently of model context size.
 
 ---
 

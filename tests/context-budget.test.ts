@@ -35,7 +35,7 @@ it('counts schemas, tool results, message frames, and output reserve in the requ
 
 it('keeps the current tool-call and result pair intact while dropping earlier complete exchanges', () => {
   const messages = [
-    { type: 'system', content: 'rules' },
+    { type: 'system', content: 'Authorized original source id=00000000-0000-4000-8000-000000000001; required subjects Acme CRM and Northstar CRM.' },
     { type: 'human', content: 'old question '.repeat(200) },
     { type: 'ai', content: 'old answer '.repeat(200) },
     { type: 'human', content: 'current query' },
@@ -47,6 +47,8 @@ it('keeps the current tool-call and result pair intact while dropping earlier co
   const compiled = compactSerializedMessages(messages, roles, { contextTokens: 6000, outputTokens: 1000, safetyTokens: 500 }, [{ schema: 'tool definition' }]);
   expect(compiled.removedPairs).toBe(1);
   expect(compiled.messages).toEqual([messages[0], messages[3], messages[4], messages[5], messages[6]]);
+  expect(JSON.stringify(compiled.messages[0])).toContain('00000000-0000-4000-8000-000000000001');
+  expect(JSON.stringify(compiled.messages[0])).toContain('Northstar CRM');
 });
 
 it('raises a typed visible-limit condition when required instructions or the current request cannot fit', () => {
