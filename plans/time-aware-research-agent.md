@@ -319,7 +319,7 @@ A reviewer starts from a clean checkout, follows the local setup, and runs the t
 ### Acceptance criteria
 
 - [ ] The clean-start walkthrough works with explicit gateway/search prerequisites, documents every needed credential, and never silently swaps fixtures into a live research interaction.
-- [ ] The CRM shortlist, dated-question verification, and Postgres-hosting comparison scenarios recover the intended originals and produce evidence-qualified answers.
+- [x] The CRM shortlist, dated-question verification, and Postgres-hosting comparison scenarios recover the intended originals and produce evidence-qualified answers. Browser fixture evidence and source limits: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md).
 - [ ] All earlier release-blocking fixtures pass: ownership isolation, invalid citations, duplicate publication, vector incompatibility, omitted subjects, deletion races, and local recovery.
 - [x] Run the mocked workload of 100 connected clients and 10 active research turns with indexing. Report hardware, history size, payloads, cache conditions, acknowledgement/first-answer/completion p50/p95, errors, and backlog without implying hosted capacity. One local synthetic run and limitations: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md).
 - [ ] Exercise slow consumers, reconnect bursts, process crashes, and dependency outages under the local workload; report limitations rather than hiding failed targets.

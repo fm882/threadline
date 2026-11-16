@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 
 const dir = await mkdtemp(join(tmpdir(), 'minmi-research-browser-'));
+const scenariosDir = await mkdtemp(join(tmpdir(), 'minmi-assignment-browser-'));
 const gateway = createServer(async (req, res) => {
   let body = ''; for await (const part of req) body += part;
   const input = JSON.parse(body);
@@ -16,10 +17,26 @@ const gateway = createServer(async (req, res) => {
   const quoteTurn = input.messages.find(m => m.role === 'user' && typeof m.content === 'string' && /I was quoted/i.test(m.content));
   const userQuote = quoteTurn?.content.match(/I was quoted[^;?]*/)?.[0].trim();
   const historicalSourceIds = [...input.messages.flatMap(m => typeof m.content === 'string' ? [...m.content.matchAll(/\[historical source:([0-9a-f-]{36})\]/gi)].map(match => match[1]) : [])];
+  const currentQuestion = input.messages.filter(m => m.role === 'user' && typeof m.content === 'string').at(-1)?.content || '';
+  const assignment = /On Monday we shortlisted 5 CRM tools/i.test(currentQuestion) ? 'crm'
+    : /What did I ask you on 3 November/i.test(currentQuestion) ? 'dated'
+      : /Last Tuesday I asked you about Postgres hosting/i.test(currentQuestion) ? 'postgres' : null;
   if (!tool) assert.match(input.messages[0].content, /requires current evidence|explicitly requests fresh verification/i);
   const source = tool ? JSON.parse(tool.content)[0] : null;
-  const message = tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: historical ? 'Acme Basic remains USD 12 monthly per seat for US customers before tax.' : 'Acme Basic is USD 12 monthly per seat for US customers before tax. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', kind: 'pricing', evidenceIds: [source.id] }], ...(historical ? { requestedSubjects: ['Acme Basic'], comparisons: [{ subject: 'Acme Basic', attribute: 'price', outcome: 'no_relevant_update_found', statement: 'Among the sources checked, the comparable price matches the earlier finding.', baselineOrigin: 'stored_evidence', baselineStatement: 'Stored source reported the original Acme Basic price.', historicalEvidenceIds: historicalSourceIds, evidenceIds: [source.id], priorDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' }, currentDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' } }] } : userQuote ? { requestedSubjects: ['Acme Basic'], comparisons: [{ subject: 'Acme Basic', attribute: 'price', outcome: 'supported_change', statement: 'The current price exceeds the user-reported quote.', baselineOrigin: 'user_reported', userQuote, historicalEvidenceIds: [], evidenceIds: [source.id], priorDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' }, currentDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' } }] } : {}), uncertainty: 'Recorded fixture.' }) }
-    : { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current information"}' } }] };
+  const message = assignment && !tool ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: assignment === 'crm' ? 'current pricing and notable product updates for the five shortlisted CRM tools' : 'current Neon and Supabase Postgres hosting prices', subjects: assignment === 'crm' ? ['Acme CRM', 'Northstar CRM', 'Copper CRM', 'Folk CRM', 'Twenty CRM'] : ['Neon Launch', 'Supabase Pro'] }) } }] }
+    : assignment && tool ? (() => {
+      const sources = JSON.parse(tool.content);
+      const subjects = assignment === 'crm' ? ['Acme CRM', 'Northstar CRM', 'Copper CRM', 'Folk CRM', 'Twenty CRM'] : ['Neon Launch', 'Supabase Pro'];
+      const claims = sources.map(item => ({ claim: item.excerpt, kind: 'pricing', evidenceIds: [item.id] }));
+      const comparisons = subjects.map(subject => {
+        const item = sources.find(candidate => candidate.title === subject);
+        return { subject, attribute: 'price', outcome: 'historical_support_missing', statement: `Current evidence for ${subject} is available, but the original answer has no source observations, so a change since then is not established.`, baselineOrigin: 'unsupported', baselineStatement: 'No source observations were attached to the original answer.', historicalEvidenceIds: [], evidenceIds: item ? [item.id] : [] };
+      });
+      const answer = { claims, requestedSubjects: subjects, comparisons, uncertainty: 'These are synthetic browser fixtures; original source support is absent, so historical price changes cannot be established.' };
+      return { role: 'assistant', content: JSON.stringify(answer) };
+    })()
+    : tool ? { role: 'assistant', content: JSON.stringify({ claims: [{ claim: historical ? 'Acme Basic remains USD 12 monthly per seat for US customers before tax.' : 'Acme Basic is USD 12 monthly per seat for US customers before tax. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', kind: 'pricing', evidenceIds: [source.id] }], ...(historical ? { requestedSubjects: ['Acme Basic'], comparisons: [{ subject: 'Acme Basic', attribute: 'price', outcome: 'no_relevant_update_found', statement: 'Among the sources checked, the comparable price matches the earlier finding.', baselineOrigin: 'stored_evidence', baselineStatement: 'Stored source reported the original Acme Basic price.', historicalEvidenceIds: historicalSourceIds, evidenceIds: [source.id], priorDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' }, currentDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' } }] } : userQuote ? { requestedSubjects: ['Acme Basic'], comparisons: [{ subject: 'Acme Basic', attribute: 'price', outcome: 'supported_change', statement: 'The current price exceeds the user-reported quote.', baselineOrigin: 'user_reported', userQuote, historicalEvidenceIds: [], evidenceIds: [source.id], priorDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' }, currentDimensions: { plan: 'Basic', currency: 'USD', billingPeriod: 'monthly', seats: 1, region: 'US', taxBasis: 'before tax' } }] } : {}), uncertainty: 'Recorded fixture.' }) }
+      : { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current information"}' } }] };
   if (tool) await new Promise(resolve => setTimeout(resolve, 800));
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ id: 'fixture', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: tool ? 'stop' : 'tool_calls' }] }));
@@ -28,7 +45,7 @@ gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
 const gatewayPort = gateway.address().port;
 const apiPort = process.env.MINMI_RESEARCH_PORT || '3458';
 let api, vite, browser;
-function startApi() { return spawn(process.execPath, ['--import', 'tsx', 'browser-tests/research-server.ts'], { stdio: 'ignore', env: { ...process.env, PORT: apiPort, APP_DATA_DIR: dir, INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1` } }); }
+function startApi(dataDir = dir, scenarioFixtures = false) { return spawn(process.execPath, ['--import', 'tsx', 'browser-tests/research-server.ts'], { stdio: 'ignore', env: { ...process.env, PORT: apiPort, APP_DATA_DIR: dataDir, MINMI_ASSIGNMENT_FIXTURES: scenarioFixtures ? '1' : '0', INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1` } }); }
 function startVite() { return spawn(process.execPath, ['node_modules/vite/bin/vite.js'], { stdio: 'ignore', env: { ...process.env, PORT: apiPort } }); }
 async function stop(child) { if (!child || child.exitCode !== null || child.signalCode !== null) return; const done = once(child, 'exit'); child.kill('SIGTERM'); await done; }
 async function ready() { for (let n = 0; n < 100; n++) { try { if ((await fetch('http://127.0.0.1:5173/health/live')).ok) return; } catch {} await new Promise(r => setTimeout(r, 100)); } throw new Error('App did not start'); }
@@ -133,8 +150,54 @@ try {
   assert.equal(continuationLink.linkedParentRunId, continuationLink.parentRunId);
   assert.equal(continuationLink.childStatus, 'completed');
   console.log('Deadline limitation and explicit linked continuation survived the browser flow.');
+
+  await stop(api); api = startApi(scenariosDir, true); await ready(); await page.goto('http://127.0.0.1:5173');
+  await page.getByRole('button', { name: '+ New conversation' }).click();
+  await page.getByLabel('Your message').fill('On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any of them changed pricing or shipped something big since?');
+  await page.getByRole('button', { name: 'Send' }).click();
+  try { await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: 15000 }); }
+  catch { throw new Error(`CRM assignment scenario did not publish a qualified comparison: ${await page.locator('.transcript').innerText()} | ${await page.locator('.composer').innerText()}`); }
+  let assignmentAnswer = await page.locator('article.assistant .content').last().innerText();
+  for (const name of ['Acme CRM', 'Northstar CRM', 'Copper CRM', 'Folk CRM', 'Twenty CRM']) assert.ok(assignmentAnswer.includes(name), `CRM answer should cover ${name}.`);
+  assert.match(assignmentAnswer, /Evidence supports now:/);
+  assert.match(assignmentAnswer, /No source observations were attached/);
+  assert.equal(await page.locator('article.assistant .content').last().getByRole('button', { name: 'Source', exact: true }).count(), 10);
+  await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
+  const crmHistory = page.getByRole('region', { name: 'Historical discussion' });
+  await crmHistory.getByText('CRM shortlist for a 20-person sales team', { exact: true }).waitFor();
+  assert.match(await crmHistory.innerText(), /Acme CRM, Northstar CRM, Copper CRM, Folk CRM, and Twenty CRM/);
+  await page.getByRole('button', { name: 'Close historical discussion' }).click();
+
+  await page.getByRole('button', { name: '+ New conversation' }).click();
+  await page.getByLabel('Your message').fill('What did I ask you on 3 November? Is your answer still correct today?');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: 15000 });
+  assignmentAnswer = await page.locator('article.assistant .content').last().innerText();
+  assert.match(assignmentAnswer, /Neon Launch/);
+  assert.match(assignmentAnswer, /Supabase Pro/);
+  assert.match(assignmentAnswer, /Evidence supports now:/);
+  await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
+  const datedHistory = page.getByRole('region', { name: 'Historical discussion' });
+  await datedHistory.getByText('Question from 3 November 2026', { exact: true }).waitFor();
+  assert.match(await datedHistory.innerText(), /Which Postgres host should I use for a hobby application/);
+  await page.getByRole('button', { name: 'Close historical discussion' }).click();
+
+  await page.getByRole('button', { name: '+ New conversation' }).click();
+  await page.getByLabel('Your message').fill('Last Tuesday I asked you about Postgres hosting. Has any pricing changed since then?');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: 15000 });
+  assignmentAnswer = await page.locator('article.assistant .content').last().innerText();
+  assert.match(assignmentAnswer, /Neon Launch/);
+  assert.match(assignmentAnswer, /Supabase Pro/);
+  assert.match(assignmentAnswer, /No source observations were attached/);
+  await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
+  const postgresHistory = page.getByRole('region', { name: 'Historical discussion' });
+  await postgresHistory.getByText('Postgres hosting from last Tuesday', { exact: true }).waitFor();
+  assert.match(await postgresHistory.innerText(), /Neon Launch was USD 19 monthly and Supabase Pro was USD 25 monthly/);
+  console.log('CRM shortlist, dated verification, and Postgres comparisons retrieved originals and cited current fixture evidence.');
 } finally {
   if (browser) await browser.close();
   await stop(api); await stop(vite); await new Promise(resolve => gateway.close(resolve));
   await rm(dir, { recursive: true, force: true });
+  await rm(scenariosDir, { recursive: true, force: true });
 }

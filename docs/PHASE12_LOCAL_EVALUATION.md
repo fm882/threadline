@@ -25,3 +25,13 @@ The reconnect burst completed in 615.52 ms; initial worker wall time after relea
 ## Coverage limits
 
 Slow-consumer delivery, reconnect replay, concurrent indexing, and a dependency failure are covered in this workload. Process-crash recovery remains covered by separate persistence tests, not this in-memory run. This is a baseline observation, not a regression threshold; numeric gates require a reviewed repeatable baseline and a separate bounded live-provider evaluation.
+
+## Assignment browser scenarios
+
+`npm run test:research-browser` runs the three problem-statement scenarios in the actual browser UI against a separate temporary PGlite database and a deterministic gateway/search fixture:
+
+- The Monday CRM question recovers the original five named products and cites current fixture evidence for each. The original answer has no stored source observations, so the UI reports `historical_support_missing` instead of asserting a price or feature change.
+- The 3 November question opens the source discussion with the original Postgres question and answer, verifies current Neon and Supabase evidence, and leaves historical correctness unresolved because no observations were attached then.
+- The last-Tuesday Postgres question retrieves its intended discussion, cites the current Neon and Supabase fixture observations, and labels the earlier price baseline unsupported.
+
+These tests verify retrieval, evidence linking, and honest comparison behavior. The generated prices, releases, and search observations are fixtures; they are not live provider research or claims about current vendor offerings.
