@@ -15,7 +15,7 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     let body = ''; for await (const part of req) body += part;
     const request = JSON.parse(body); requests.push(request);
     let message: object;
-    if (requests.length === 1) message = { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current price"}' } }] };
+    if (requests.length === 1) message = { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"current price","subjects":["Acme CRM"]}' } }] };
     else {
       const toolResult = request.messages.find((m: any) => m.role === 'tool');
       const evidence = JSON.parse(toolResult.content)[0];
@@ -32,6 +32,7 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     expect(typeof answer).toBe('object');
     if (typeof answer === 'string') throw new Error('Expected research answer');
     expect(requests[0].tools).toHaveLength(1);
+    expect((await store.researchBudget('alice', runId)).requested_subjects).toEqual(['Acme CRM']);
     expect(requests[1].messages.some((m: any) => m.role === 'tool' && m.tool_call_id === 'call_1')).toBe(true);
     expect(requests[1].tools).toHaveLength(1);
     expect(answer.content).toContain('[source:');
@@ -43,6 +44,30 @@ it('performs a model tool-call and result continuation with run-owned evidence',
     expect(progress.map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing']);
     expect(await store.publish('alice', runId, answer.content, answer.claims)).toBe(true);
     expect((await store.evidence('alice', answer.claims[0].evidenceIds[0]))).toBeTruthy();
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
+it('rejects a final comparison that omits a subject captured in the search plan', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'key', 'Has pricing changed for Acme and Northstar?');
+  let requests = 0;
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    const request = JSON.parse(body); requests++;
+    const evidence = JSON.parse(request.messages.find((message: any) => message.role === 'tool')?.content || '[]')[0];
+    const message = requests === 1
+      ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"CRM pricing","subjects":["Acme","Northstar"]}' } }] }
+      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Acme has a current price.', kind: 'pricing', evidenceIds: [evidence.id] }], requestedSubjects: ['Acme'], comparisons: [{ subject: 'Acme', attribute: 'price', outcome: 'inconclusive', statement: 'Current details are incomplete.', evidenceIds: [evidence.id] }], uncertainty: '' }) };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'tool_calls' : 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, search: async () => [{ url: 'https://example.com/', title: 'Pricing', excerpt: 'Acme pricing details.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    await expect(client([{ role: 'system', content: 'Authorized historical context. Acme and Northstar were discussed.' }, { role: 'user', content: 'Has pricing changed for Acme and Northstar?' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow('Every requested comparison subject');
+    expect((await store.researchBudget('alice', runId)).requested_subjects).toEqual(['Acme', 'Northstar']);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 

@@ -118,7 +118,8 @@ try {
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('[deadline fixture] Research current CRM pricing.');
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByText('No supported partial findings are available yet.', { exact: false }).waitFor({ timeout: 15000 });
+  try { await page.getByText('Acme CRM, Northstar CRM', { exact: false }).waitFor({ timeout: 15000 }); }
+  catch { throw new Error(`Deadline run did not list its named subject gaps: ${await page.locator('.transcript').innerText()} | ${await page.locator('.composer').innerText()}`); }
   await page.getByRole('button', { name: 'Continue research' }).click();
   await page.getByText('Continuation completed with a fresh time limit.', { exact: true }).waitFor({ timeout: 15000 });
   const continuationLink = await page.evaluate(async () => {

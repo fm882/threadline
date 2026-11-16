@@ -5,6 +5,7 @@ import { Store } from '../src/persistence/store.js';
 import { createChatRunner } from '../src/research/chat.js';
 import { createDispatcher } from '../src/jobs/dispatcher.js';
 import { startRecovery } from '../src/jobs/recovery.js';
+import { processIndexJob } from '../src/history/index.js';
 
 async function waitFor(predicate: () => Promise<boolean>) {
   for (let i = 0; i < 100; i++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
@@ -48,6 +49,31 @@ it('waits for gateway readiness before resuming an accepted job', async () => {
       expect(calls).toBe(1);
     } finally { await stop(); await dispatcher.shutdown(); }
   } finally { saver.db.close(); await db.close(); }
+});
+
+it('keeps foreground concurrency bounded while the separate indexer makes progress', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const space = await store.createEmbeddingGeneration({ id: 'budget-index', model: 'fixture-v1', dimensions: 3, normalized: true, queryMode: 'shared', documentMode: 'shared', chunkingVersion: 'exchange-v1' });
+    await store.activateEmbeddingGeneration(space.id, space.generation);
+    const conversation = await store.createConversation('alice');
+    const source = await store.admit('alice', conversation, 'source', 'CRM shortlist');
+    await store.publish('alice', source, 'Acme CRM and Northstar CRM.');
+    const [indexJob] = await store.pendingIndexJobs(4, space);
+    let release!: () => void, started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const dispatcher = createDispatcher(store, async () => {
+      started();
+      await new Promise<void>(resolve => { release = resolve; });
+    }, 1);
+    try {
+      expect(dispatcher.dispatch('alice', 'active-1')).toBe(true);
+      await entered;
+      expect(dispatcher.dispatch('alice', 'active-2')).toBe(false);
+      expect(await processIndexJob(store, indexJob, space, async inputs => inputs.map(() => [1, 0, 0]))).toBe(true);
+    } finally { release(); await dispatcher.shutdown(); }
+  } finally { await db.close(); }
 });
 
 it('leaves an interrupted worker active for a later recovery instead of marking it failed', async () => {

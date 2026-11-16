@@ -93,8 +93,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS run_budgets (
         run_id TEXT PRIMARY KEY REFERENCES runs(id), started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         deadline_at TIMESTAMPTZ NOT NULL, model_calls INTEGER NOT NULL DEFAULT 0,
-        search_queries INTEGER NOT NULL DEFAULT 0, prompt_bytes INTEGER NOT NULL DEFAULT 0
+        search_queries INTEGER NOT NULL DEFAULT 0, prompt_bytes INTEGER NOT NULL DEFAULT 0,
+        requested_subjects JSONB NOT NULL DEFAULT '[]'
       );
+      ALTER TABLE run_budgets ADD COLUMN IF NOT EXISTS requested_subjects JSONB NOT NULL DEFAULT '[]';
       CREATE TABLE IF NOT EXISTS search_queries (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL,
         query TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -190,10 +192,19 @@ export class Store {
   }
 
   async researchBudget(owner: string, runId: string) {
-    const result = await this.db.query<{ started_at: Date; deadline_at: Date; model_calls: number; search_queries: number; prompt_bytes: number }>(`SELECT b.started_at, b.deadline_at, b.model_calls, b.search_queries, b.prompt_bytes
+    const result = await this.db.query<{ started_at: Date; deadline_at: Date; model_calls: number; search_queries: number; prompt_bytes: number; requested_subjects: string[] }>(`SELECT b.started_at, b.deadline_at, b.model_calls, b.search_queries, b.prompt_bytes, b.requested_subjects
       FROM run_budgets b JOIN runs r ON r.id = b.run_id WHERE b.run_id = $1 AND r.owner_id = $2`, [runId, owner]);
     if (!result.rows.length) throw new NotFound('Run budget not found');
     return result.rows[0];
+  }
+
+  async setRequestedSubjects(owner: string, runId: string, subjects: string[]) {
+    const normalized = [...new Set(subjects.map(subject => subject.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)).filter(Boolean))].slice(0, 10);
+    const result = await this.db.query(`UPDATE run_budgets b SET requested_subjects = $3::jsonb
+      WHERE b.run_id = $1 AND EXISTS (SELECT 1 FROM runs r WHERE r.id = b.run_id AND r.owner_id = $2 AND r.status = 'active')
+      RETURNING requested_subjects`, [runId, owner, JSON.stringify(normalized)]);
+    if (!result.rows.length) throw new NotFound('Active run budget not found');
+    return normalized;
   }
 
   async reserveResearchWork(owner: string, runId: string, work: { modelCalls?: number; searchQueries?: number; promptBytes?: number }) {

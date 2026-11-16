@@ -170,12 +170,16 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       // Never persist raw provider errors, which may include credentials or request content.
       const deadlineExpired = Boolean(deadlineController?.signal.aborted && !signal?.aborted) || (error instanceof Error && error.message === 'Deadline exceeded');
       if (deadlineExpired) {
-        if (await store.publishIncomplete(owner, run, 'Research reached its time limit before a verified answer was ready. No supported partial findings are available yet. Continue research with a fresh time limit, or narrow the question.')) trace.stage('incomplete');
+        const { requested_subjects: subjects } = await store.researchBudget(owner, run);
+        const gaps = subjects.length ? ` Supported findings or explicit evidence gaps are still needed for: ${subjects.join(', ')}.` : '';
+        if (await store.publishIncomplete(owner, run, `Research reached its time limit before a verified answer was ready. No supported partial findings are available yet.${gaps} Continue research with a fresh time limit, or narrow the question.`)) trace.stage('incomplete');
       } else if (!signal?.aborted) {
         if (error instanceof ContextBudgetError) {
           if (await store.publish(owner, run, 'The requested history and instructions exceed the configured context limit. Narrow the topic or date so I can keep the original evidence and answer safely.')) trace.stage('publication');
         } else if (error instanceof RunBudgetExceeded) {
-          if (await store.publishIncomplete(owner, run, 'Research reached a shared call, query, or context budget before a verified answer was ready. No supported partial findings are available yet. Continue with a fresh budget, or narrow the question.')) trace.stage('incomplete');
+          const { requested_subjects: subjects } = await store.researchBudget(owner, run);
+          const gaps = subjects.length ? ` Supported findings or explicit evidence gaps are still needed for: ${subjects.join(', ')}.` : '';
+          if (await store.publishIncomplete(owner, run, `Research reached a shared call, query, or context budget before a verified answer was ready. No supported partial findings are available yet.${gaps} Continue with a fresh budget, or narrow the question.`)) trace.stage('incomplete');
         }
         else { trace.stage('failure'); await store.fail(owner, run, 'The research provider failed before a verified answer was ready. Check gateway and search configuration, then retry.'); }
       }

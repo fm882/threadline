@@ -11,12 +11,15 @@ it('turns a run deadline into an explicit incomplete terminal result, distinct f
     const store = new Store(db); await store.initialize();
     const conversation = await store.createConversation('alice');
     const run = await store.admit('alice', conversation, 'timeout', 'Research current CRM pricing.');
-    const runner = createChatRunner(store, saver, async () => new Promise(() => {}), () => {}, undefined, 10);
+    const runner = createChatRunner(store, saver, async () => {
+      await store.setRequestedSubjects('alice', run, ['Acme', 'Northstar']);
+      return new Promise(() => {});
+    }, () => {}, undefined, 10);
     await runner('alice', run);
     expect((await store.getRun('alice', run)).status).toBe('incomplete');
     expect(await store.terminalSnapshot('alice', run)).toMatchObject({ kind: 'incomplete' });
     expect((await store.events('alice', run)).at(-1)?.kind).toBe('incomplete');
-    expect((await store.messages('alice', conversation)).at(-1)?.content).toContain('No supported partial findings are available yet');
+    expect((await store.messages('alice', conversation)).at(-1)?.content).toContain('Supported findings or explicit evidence gaps are still needed for: Acme, Northstar.');
   } finally { saver.db.close(); await db.close(); }
 });
 
@@ -49,6 +52,7 @@ it('admits an owner-scoped continuation as a fresh linked run and keeps retries 
     const store = new Store(db); await store.initialize();
     const conversation = await store.createConversation('alice');
     const parent = await store.admit('alice', conversation, 'timed-out', 'Research current CRM pricing.', true);
+    await store.registerEvidence('alice', parent, [{ url: 'https://example.com/parent', title: 'Parent evidence', excerpt: 'Evidence from the incomplete parent run.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }]);
     await store.publishIncomplete('alice', parent, 'Research timed out. Continue when ready.');
     const app = createApp({ store, owner: request => request.headers.get('x-owner') || 'alice', ready: () => null, run: async () => {} });
     const headers = { 'Content-Type': 'application/json', 'Idempotency-Key': 'continue-once' };
@@ -57,6 +61,8 @@ it('admits an owner-scoped continuation as a fresh linked run and keeps retries 
     const { runId, continuationOf } = await response.json() as { runId: string; continuationOf: string };
     expect(continuationOf).toBe(parent);
     expect((await store.getRun('alice', runId))).toMatchObject({ status: 'active', parent_run_id: parent, verify_current: true });
+    expect((await store.context('alice', runId)).history).toEqual([]);
+    expect((await db.query('SELECT id FROM evidence_observations WHERE run_id = $1', [runId])).rows).toEqual([]);
     expect(await store.existingAdmission('alice', conversation, 'continue-once', 'Research current CRM pricing.', true, parent)).toBe(runId);
     const duplicate = await app.request(`/api/runs/${parent}/continue`, { method: 'POST', headers, body: '{}' });
     expect((await duplicate.json() as { runId: string }).runId).toBe(runId);
