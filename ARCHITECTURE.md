@@ -1,6 +1,6 @@
 # Time-Aware Research Agent — detailed architecture
 
-> **Status:** implemented local-first application and architecture record. The Node/TypeScript chat UI/API, bounded research and citations, durable history/recall, continuation, and synthetic local evaluation are implemented. Phase 10 context fallback/decomposition and parts of the Phase 12 evidence gate remain open; see the checked plan for exact status. The 100-client load run is synthetic, not hosted capacity, and provider quality/cost gates remain uncalibrated. Cloud deployment, production identity, hosting selection, and multi-replica operation are deferred.
+> **Status:** implemented local-first application and architecture record. The Node/TypeScript chat UI/API, bounded research and citations, durable history/recall, continuation, and synthetic local evaluation are implemented. The permitted Phase 10 model fallback and paid Phase 12 quality/cost gates remain open; see the checked plan for exact status. The 100-client load run is synthetic, not hosted capacity. Cloud deployment, production identity, hosting selection, and multi-replica operation are deferred.
 >
 > **Decision:** Node/TypeScript + Hono + LangGraph + LangChain + LangSmith. All chat, embedding, and reranking inference initially runs on AWS Bedrock through a local LiteLLM gateway (a remote gateway remains an optional future connection mode). The application uses OpenAI-compatible chat/embedding clients; reranking has a separate gateway contract.
 >
