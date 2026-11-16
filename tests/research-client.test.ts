@@ -390,3 +390,30 @@ it('does not fall back after a main-route capability or request rejection', asyn
     expect(requests).toBe(1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('does not invoke a fallback when the preserved current request exceeds its smaller context envelope', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'overflow-key', 'Current question');
+  const models: string[] = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    models.push(JSON.parse(body).model);
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'synthetic main-route outage', type: 'server_error' } }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({
+      baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 32_000,
+      fallback: {
+        model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true, contextTokens: 4096, maxOutputTokens: 1024,
+        verification: { streaming: 'passed', researchContract: 'passed', backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
+      },
+      searchKey: '', store, owner: 'alice', runId,
+    });
+    await expect(client([{ role: 'user', content: `Current question: ${'x'.repeat(2000)}` }], () => {}, AbortSignal.timeout(5000))).rejects.toBeInstanceOf(ContextBudgetError);
+    expect(models).toEqual(['chat-main-v1']);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
