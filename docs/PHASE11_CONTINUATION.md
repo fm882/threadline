@@ -14,7 +14,7 @@
 
 - `npm run typecheck`
 - `npm test -- tests/continuation.test.ts tests/chat.test.ts tests/api.test.ts tests/recovery.test.ts tests/history-context.test.ts` — 5 files, 41 tests passed.
-- `npm test` — 29 files, 143 tests passed after adjusting shared recovery headroom for the existing crash-during-tool-result fixture.
+- `npm test` — 29 files, 148 tests passed after adding timeout partial-observation and run-scoped citation regressions.
 - `npm test -- tests/recovery.test.ts tests/continuation.test.ts tests/research-client.test.ts tests/recall-flow.test.ts` — 4 files, 27 tests passed after adding subject omissions, parent evidence isolation, and dated question verification coverage.
 - `npm run test:research-browser` — passed after the latest API response assertion; demonstrated the deadline limitation, explicit continuation action, linked child run, and completed child status after restart.
 - A durable budget regression verifies the deadline and all cumulative limits survive the second worker attempt; process recovery verified the bounded retry can finish a tool-result continuation. A separate worker test confirms the foreground concurrency cap while indexing proceeds independently.
