@@ -1,11 +1,11 @@
-# Local, single-user gateway. Start with: node scripts/start-gateway.mjs
-# Credentials come from the AWS CLI profile/environment credential chain.
-# No AWS keys or machine-specific profile names belong in this file.
+# Local, single-user gateway. Chat uses Token Harbor; embeddings, reranking, and
+# the optional fast fallback use the AWS CLI profile/environment credential chain.
 model_list:
   - model_name: chat-main-v1
     litellm_params:
-      model: os.environ/BEDROCK_MAIN_ROUTE
-      aws_region_name: os.environ/AWS_REGION_NAME
+      model: openai/deepseek-v4.1-flash:free
+      api_base: https://tokenharbor.ai/v1
+      api_key: os.environ/TOKENHARBOR_API_KEY
   - model_name: chat-fast-v1
     litellm_params:
       model: os.environ/BEDROCK_FAST_ROUTE

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { root } from './local-env.mjs';
 
 const env = { ...process.env };
+env.TOKENHARBOR_API_KEY ||= env.token_harbor_api;
+if (!env.TOKENHARBOR_API_KEY) throw new Error('Set TOKENHARBOR_API_KEY in .env to route the main chat alias through Token Harbor.');
 env.AWS_REGION_NAME ||= env.AWS_REGION || env.AWS_DEFAULT_REGION || 'us-east-1';
 env.AWS_DEFAULT_REGION ||= env.AWS_REGION_NAME;
 env.BEDROCK_MAIN_ROUTE ||= 'bedrock/converse/us.amazon.nova-pro-v1:0';

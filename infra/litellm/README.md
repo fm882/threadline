@@ -1,18 +1,18 @@
-# Local Bedrock inference through LiteLLM
+# Local inference through LiteLLM
 
-This is local infrastructure and a reproducible inference check, not the implemented chat application. No cloud deployment or provisioning is needed. All actual inference still calls AWS Bedrock and can incur usage charges.
+This is local infrastructure and a reproducible inference check, not the implemented chat application. No cloud deployment or provisioning is needed. Main chat uses Token Harbor's OpenAI-compatible API. The fast fallback, embeddings, and reranking use AWS Bedrock and can incur usage charges.
 
 ## Tested baseline
 
 - Node 22.23.2 for these dependency-free helper scripts; the application runtime remains the documented supported LTS target.
 - LiteLLM 1.103.2, with proxy dependencies, already installed in the current environment.
+- Token Harbor route: `deepseek-v4.1-flash:free` for `chat-main-v1`.
 - Existing AWS CLI profile credentials; inference source region `us-east-1`.
-- Main: `us.amazon.nova-pro-v1:0`.
-- Fast: `us.amazon.nova-micro-v1:0`.
+- Fast fallback: `us.amazon.nova-micro-v1:0`.
 - Embeddings: `amazon.titan-embed-text-v2:0`, 1024 float dimensions; unit norms verified.
 - Rerank: `cohere.rerank-v3-5:0` through the **Bedrock** rerank API.
 
-The `us.` inference profiles may route within their configured US regions. This is not a claim that processing is confined to the source region. See [the verification report](../../docs/INFERENCE_VERIFICATION.md) for actual results and limitations.
+Bedrock inference profiles may route within their configured US regions. This is not a claim that processing is confined to the source region. See [the verification report](../../docs/INFERENCE_VERIFICATION.md) for actual results and limitations.
 
 ## 1. Prerequisites
 
@@ -37,7 +37,7 @@ If an installation already exists, inspect its version before changing it. The h
 
 ## 2. Configure
 
-From the project root, copy `.env.example` to `.env` only if `.env` does not already exist. Select an existing authorized AWS profile through `AWS_PROFILE` in the shell or `.env` when the default is not appropriate. Never copy AWS access keys into the project.
+From the project root, copy `.env.example` to `.env` only if `.env` does not already exist. Set `TOKENHARBOR_API_KEY` in the ignored `.env` for main chat. Select an existing authorized AWS profile through `AWS_PROFILE` in the shell or `.env` when the default is not appropriate for the Bedrock fallback, embeddings, or reranking. Never copy AWS access keys into the project.
 
 ```bash
 cp -n .env.example .env
@@ -45,9 +45,9 @@ cp -n .env.example .env
 export AWS_PROFILE=your-existing-profile
 ```
 
-The example file already contains the tested Nova/Titan/rerank routes. Claude route examples are commented because the tested account returned `INVALID_PAYMENT_INSTRUMENT` for Claude. Do not assume catalog visibility grants invocation permission.
+The example file contains the verified Nova Micro fallback and Titan/rerank routes. The main chat route is configured to Token Harbor's DeepSeek free model. Do not assume catalog visibility grants invocation permission for other Bedrock models.
 
-The launcher reads `.env` using Node's built-in environment-file support. Shell environment overrides can be used for experiments without editing tracked configuration. `AWS_REGION_NAME` must match the selected routes and rerank model ARN. Changing only the region does not make every route available there.
+The launcher reads `.env` using Node's built-in environment-file support. Shell environment overrides can be used for experiments without editing tracked configuration. `AWS_REGION_NAME` must match the selected Bedrock routes and rerank model ARN. Changing only the region does not make every route available there.
 
 ## 3. Start the local gateway
 
@@ -55,7 +55,7 @@ The launcher reads `.env` using Node's built-in environment-file support. Shell 
 node scripts/start-gateway.mjs
 ```
 
-It binds only to `127.0.0.1:4000`, uses [config.yaml](config.yaml), and creates `.data/litellm.key` with mode 0600 when no explicit `LITELLM_MASTER_KEY` is supplied. `.data/` and `.env` are ignored by Git. The key is never printed. Stop the foreground launcher with Ctrl-C.
+It binds only to `127.0.0.1:4000`, uses [config.yaml](config.yaml), and creates `.data/litellm.key` with mode 0600 when no explicit `LITELLM_MASTER_KEY` is supplied. `.data/` and `.env` are ignored by Git. The gateway key is never printed. Stop the foreground launcher with Ctrl-C.
 
 No gateway database is configured. LiteLLM's no-database authentication accepts its master key, so the local verifier uses that key. **This is a single-user, loopback-only development exception.** Never expose this process remotely or give that key to a browser. A future deployed gateway must use scoped credentials and an appropriate control-plane configuration.
 

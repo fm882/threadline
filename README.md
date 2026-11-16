@@ -1,10 +1,10 @@
 # Time-aware research agent
 
-This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Local browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. The Phase 10 fallback mechanism is implemented but stays disabled until its exact fast route passes live verification; paid Phase 12 quality/cost gates also remain open. See the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
+This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Local browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. Main chat routes through Token Harbor's `deepseek-v4.1-flash:free`; the verified Nova Micro fallback and Bedrock embedding/rerank routes remain available. Live research results and remaining quality/cost limits are recorded in [Phase 12 live evaluation](docs/PHASE12_LIVE_EVALUATION.md). See also the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
 
 ## Local development
 
-Requirements: Node.js 22 or newer, npm, and a running OpenAI-compatible inference gateway with the configured model alias. The tested local gateway uses LiteLLM and AWS Bedrock; [gateway setup](infra/litellm/README.md) explains its separate prerequisites, credentials, and usage charges. Keep provider credentials in the gateway, not the browser.
+Requirements: Node.js 22 or newer, npm, a Token Harbor API key in local `.env`, and a running OpenAI-compatible inference gateway with the configured model alias. The local gateway uses LiteLLM, Token Harbor for main chat, and AWS Bedrock for the verified fast fallback, embeddings, and reranking; [gateway setup](infra/litellm/README.md) explains its credentials and usage. Keep provider credentials in the gateway, not the browser.
 
 1. Run `npm install`.
 2. Copy `.env.example` to `.env` if you need to change the defaults. Do not commit `.env`.
