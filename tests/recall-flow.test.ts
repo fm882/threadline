@@ -14,19 +14,41 @@ it('publishes an original-backed date recall and exposes its owner-scoped page',
     const original = await store.admit('alice', conversation, 'one', 'Original question?');
     await db.query("UPDATE messages SET created_at = '2025-11-03T12:00:00Z' WHERE turn_id = (SELECT turn_id FROM runs WHERE id = $1) AND role = 'user'", [original]);
     await store.publish('alice', original, 'Original answer');
-    const run = await store.admit('alice', conversation, 'two', 'What did I ask on 3 November 2025? Is your answer still correct today?');
+    const run = await store.admit('alice', conversation, 'two', 'What did I ask on 3 November 2025?');
     let modelCalls = 0;
     await createChatRunner(store, saver, async () => { modelCalls++; return 'fabricated'; })('alice', run);
     expect(modelCalls).toBe(0);
     const messages = await store.messages('alice', conversation);
     const match = /\[recall:([a-f0-9-]+)\]/.exec(messages.at(-1)!.content);
     expect(match).not.toBeNull();
-    expect(messages.at(-1)!.content).toContain('I have not verified any earlier answer');
+    expect(messages.at(-1)!.content).toContain('Found 1 retained question');
     const app = createApp({ store, owner: req => req.headers.get('x-fixture-owner') || 'alice', ready: () => null, run: async () => {} });
     const page = await (await app.request(`/api/history/${match![1]}`)).json();
     expect(page.messages.map((m: { content: string }) => m.content)).toEqual(['Original question?']);
     expect(page.coverage).toBe('complete');
     expect((await app.request(`/api/history/${match![1]}`, { headers: { 'x-fixture-owner': 'bob' } })).status).toBe(404);
+  } finally { saver.db.close(); await db.close(); }
+});
+
+it('routes dated question recall plus current verification through authorized historical context', async () => {
+  const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const original = await store.admit('alice', conversation, 'original', 'Which Postgres host fits a small project?');
+    await db.query("UPDATE messages SET created_at = '2025-11-03T12:00:00Z' WHERE turn_id = (SELECT turn_id FROM runs WHERE id = $1) AND role = 'user'", [original]);
+    await store.publish('alice', original, 'Earlier answer: Acme Postgres is the best fit at USD 10 monthly.');
+    const run = await store.admit('alice', conversation, 'verify', 'What did I ask on 3 November 2025? Is your answer still correct today?', true);
+    let modelContext = '';
+    await createChatRunner(store, saver, async messages => {
+      modelContext = messages.map(message => message.content).join('\n');
+      return 'Current verification needs fresh source evidence.';
+    })('alice', run);
+    expect(modelContext).toContain('Authorized historical context');
+    expect(modelContext).toContain('Which Postgres host fits a small project?');
+    expect(modelContext).toContain('Earlier answer: Acme Postgres is the best fit at USD 10 monthly.');
+    expect(modelContext).toContain('discussion date 2025-11-03');
+    expect((await store.messages('alice', conversation)).at(-1)?.content).toContain('Current verification needs fresh source evidence.');
   } finally { saver.db.close(); await db.close(); }
 });
 

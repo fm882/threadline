@@ -20,6 +20,7 @@ const dayLabel = (date: string) => new Intl.DateTimeFormat('en', { dateStyle: 'm
 
 export async function prepareHistoricalContext(store: Store, owner: string, runId: string, input: string, recordedAt: Date, timezone: string, continuity: string, retrieve?: HistoryRetriever): Promise<HistoricalContextPreparation> {
   const request = interpretHistoricalRequest(input, recordedAt, timezone, continuity);
+  if (/\bwhat\s+(?:did|have)\s+i\s+(?:ask|say|asked|said)\b/i.test(input) && request.discussion.status === 'resolved') request.terms = [];
   const selectedNumber = choiceNumber(input);
   if (!request.needed && selectedNumber === null) return { kind: 'not_needed' };
   try {

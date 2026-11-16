@@ -4,6 +4,7 @@ import { interpretDateReference } from './date-reference.js';
 /** Only exact-question recall is handled here; other references remain on the normal path. */
 export async function prepareExactRecall(store: Store, owner: string, runId: string, input: string, recordedAt: Date, timezone: string): Promise<string | null> {
   if (!/\bwhat\s+(?:did|have)\s+i\s+(?:ask|say|asked|said)\b/i.test(input)) return null;
+  if (/\b(?:today|tonight|now|currently|current|latest|recent|up[ -]to[ -]date|as of|correct|accurate|right|valid|still\s+true|same|changed?|change|since|verify|verified)\b/i.test(input)) return null;
   // A follow-up such as "Is your answer still correct today?" describes the
   // verification time, not the date of the original question.
   const date = interpretDateReference(input.split('?')[0], recordedAt, timezone);
