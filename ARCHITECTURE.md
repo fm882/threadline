@@ -43,7 +43,7 @@ The source of assignment requirements is [problem_statement.md](problem_statemen
 - Application implementation is JavaScript or TypeScript on Node. FastAPI is not the application backend.
 - The completed application must start with `npm install` followed by `npm run dev`. This remains an implementation acceptance requirement, not a claim that a chat app already exists. Live inference additionally requires a running configured gateway and documented service credentials.
 - Exactly one **model-visible tool**, `web_search`. Historical retrieval, persistence, embedding, and reranking are application operations, not extra tools exposed to the agent.
-- Every required API key is documented in `.env.example`; no credentials are committed.
+- Generic application endpoint, model, search, embedding, and reranker settings are documented in `.env.example`; provider-specific credentials are configured only for the selected routes and are never committed.
 - Public repository and one-page `DESIGN.md` are submission deliverables. Publishing is a separate action from writing this document.
 - Initial infrastructure is local: run the installed LiteLLM executable using the Node helper and existing AWS CLI profile credentials. LiteLLM is a third-party inference service, not a custom Python application backend. No cloud resources are provisioned. A future reviewer may instead use a provided remote gateway, avoiding local Python/AWS setup.
 

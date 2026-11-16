@@ -37,7 +37,7 @@ If an installation already exists, inspect its version before changing it. The h
 
 ## 2. Configure
 
-From the project root, copy `.env.example` to `.env` only if `.env` does not already exist. Set `TOKENHARBOR_API_KEY` in the ignored `.env` for main chat. Select an existing authorized AWS profile through `AWS_PROFILE` in the shell or `.env` when the default is not appropriate for the Bedrock fallback, embeddings, or reranking. Never copy AWS access keys into the project.
+From the project root, copy `.env.example` to `.env` only if `.env` does not already exist. The generic example contains placeholder direct-endpoint settings; when using this bundled LiteLLM configuration, set the app aliases and local gateway URL as shown in the main [README](../../README.md). Add `TOKENHARBOR_API_KEY` to the ignored `.env` for the example main-chat route. Select an existing authorized AWS profile through `AWS_PROFILE` in the shell or `.env` when the default is not appropriate for the configured Bedrock routes. Never copy AWS access keys into the project.
 
 ```bash
 cp -n .env.example .env
@@ -45,7 +45,7 @@ cp -n .env.example .env
 export AWS_PROFILE=your-existing-profile
 ```
 
-The example file contains the verified Nova Micro fallback and Titan/rerank routes. The main chat route is configured to Token Harbor's DeepSeek free model. Do not assume catalog visibility grants invocation permission for other Bedrock models.
+The tracked LiteLLM config contains example routes for Token Harbor main chat, the Nova Micro fallback, Titan embeddings, and Bedrock Cohere reranking. The generic `.env.example` does not require these providers; configure only the credentials for routes you choose. Do not assume catalog visibility grants invocation permission for a provider model.
 
 The launcher reads `.env` using Node's built-in environment-file support. Shell environment overrides can be used for experiments without editing tracked configuration. `AWS_REGION_NAME` must match the selected Bedrock routes and rerank model ARN. Changing only the region does not make every route available there.
 
