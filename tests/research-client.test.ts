@@ -470,6 +470,8 @@ it('recompiles the full research prompt against the smaller verified fallback af
     ]).flat();
     const answer = await client([...history, { role: 'user', content: 'What is Northstar CRM current pricing?' }], () => {}, AbortSignal.timeout(5000));
     expect(requests.map(item => item.model)).toEqual(['chat-main-v1', 'chat-fast-v1', 'chat-fast-v1']);
+    expect(requests[1].response_format).toBeUndefined();
+    expect(requests[2].response_format).toEqual({ type: 'json_object' });
     expect(requests[1].messages.length).toBeLessThan(requests[0].messages.length);
     expect(JSON.stringify(requests[1].messages)).toContain('What is Northstar CRM current pricing?');
     expect(answer).toMatchObject({ claims: [{ claim: expect.stringContaining('$19') }] });

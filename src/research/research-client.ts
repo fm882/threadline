@@ -22,7 +22,7 @@ const comparisonSchema = z.object({
   priorDimensions: z.object({ plan: z.string().optional(), currency: z.string().optional(), billingPeriod: z.string().optional(), seats: z.number().int().positive().optional(), region: z.string().optional(), taxBasis: z.string().optional() }).strip().optional(),
   currentDimensions: z.object({ plan: z.string().optional(), currency: z.string().optional(), billingPeriod: z.string().optional(), seats: z.number().int().positive().optional(), region: z.string().optional(), taxBasis: z.string().optional() }).strip().optional(),
 }).strip();
-export const researchSchema = z.object({ claims: z.array(z.object({ claim: z.string().trim().min(1).max(4000), kind: z.enum(['pricing', 'other']), evidenceIds: z.array(z.string().uuid()).max(5) }).strict()).max(10), requestedSubjects: z.array(z.string().trim().min(1).max(200)).max(10).default([]), comparisons: z.array(comparisonSchema).max(10).default([]), uncertainty: z.string().max(2000) }).strict();
+export const researchSchema = z.object({ claims: z.array(z.object({ claim: z.string().trim().min(1).max(4000), kind: z.enum(['pricing', 'other']), evidenceIds: z.array(z.string().uuid()).max(5) }).strict()).max(10), requestedSubjects: z.array(z.string().trim().min(1).max(200)).max(10).default([]), comparisons: z.array(comparisonSchema).max(10).default([]), uncertainty: z.string().max(2000) }).strip();
 export type ResearchComparison = z.infer<typeof comparisonSchema>;
 
 export function parsePromptedJson(content: string): unknown {
@@ -128,31 +128,36 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
   const mainProfile: ModelProfile = { model: config.model, contextTokens: config.contextTokens || 32_000, maxOutputTokens: 8192 };
   const fallbackProfile: ModelProfile | undefined = config.fallback;
   const models = new Map<string, ChatOpenAI>();
-  const modelFor = (profile: ModelProfile) => {
-    let model = models.get(profile.model);
+  const modelFor = (profile: ModelProfile, jsonOnly = false) => {
+    const key = `${profile.model}:${jsonOnly ? 'json' : 'default'}`;
+    let model = models.get(key);
     if (!model) {
-      model = new ChatOpenAI({ model: profile.model, apiKey: config.apiKey, configuration: { baseURL: config.baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: profile.maxOutputTokens, maxRetries: 0, timeout: 120_000 });
-      models.set(profile.model, model);
+      model = new ChatOpenAI({ model: profile.model, apiKey: config.apiKey, configuration: { baseURL: config.baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: profile.maxOutputTokens, modelKwargs: jsonOnly ? { response_format: { type: 'json_object' } } : undefined, maxRetries: 0, timeout: 120_000 });
+      models.set(key, model);
     }
     return model;
   };
   const search = config.search || tavilySearch(config.searchKey);
   return async (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal): Promise<string | ResearchAnswer> => {
     let activeProfile = mainProfile;
-    const invoke = async (input: BaseMessage[], roles: string[]) => {
+    const invoke = async (input: BaseMessage[], roles: string[], jsonOnly = false) => {
       const compile = (profile: ModelProfile) => compactSerializedMessages(input, roles,
         { contextTokens: profile.contextTokens, outputTokens: profile.maxOutputTokens, safetyTokens: 2048 }, [tool]);
       let compiled = compile(activeProfile);
       await config.store.reserveResearchWork(config.owner, config.runId, { modelCalls: 1, promptBytes: compiled.inputCost });
       try {
-        return { response: await modelFor(activeProfile).bindTools([tool]).invoke(compiled.messages, { signal }), messages: compiled.messages };
+        const model = modelFor(activeProfile, jsonOnly);
+        const response = jsonOnly ? await model.invoke(compiled.messages, { signal }) : await model.bindTools([tool]).invoke(compiled.messages, { signal });
+        return { response, messages: compiled.messages };
       } catch (error) {
         if (!fallbackProfile || activeProfile !== mainProfile || !canUseFallback(error)) throw error;
         signal.throwIfAborted();
         activeProfile = fallbackProfile;
         compiled = compile(activeProfile);
         await config.store.reserveResearchWork(config.owner, config.runId, { modelCalls: 1, promptBytes: compiled.inputCost });
-        return { response: await modelFor(activeProfile).bindTools([tool]).invoke(compiled.messages, { signal }), messages: compiled.messages };
+        const model = modelFor(activeProfile, jsonOnly);
+        const response = jsonOnly ? await model.invoke(compiled.messages, { signal }) : await model.bindTools([tool]).invoke(compiled.messages, { signal });
+        return { response, messages: compiled.messages };
       }
     };
     let plannedSubjects: string[] = [];
@@ -242,7 +247,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     else continuationMessages[systemIndex] = new SystemMessage(`${continuationMessages[systemIndex].content}\n\n${outputInstructions}`);
     continuationMessages.push(first, ...toolResults);
     let continuationRoles = continuationMessages.map(message => message instanceof HumanMessage ? 'user' : message instanceof AIMessage ? 'assistant' : 'system');
-    let continuation = (await invoke(continuationMessages, continuationRoles)).response;
+    let continuation = (await invoke(continuationMessages, continuationRoles, activeProfile === fallbackProfile)).response;
     let followupRounds = 0;
     signal.throwIfAborted();
     while (continuation.tool_calls?.length) {
@@ -257,7 +262,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       if (!await config.store.recordProgress(config.owner, config.runId, 'reviewing')) throw new Error('Run is no longer active');
       continuationMessages.push(continuation, ...additionalResults);
       continuationRoles = continuationMessages.map(message => message instanceof HumanMessage ? 'user' : message instanceof AIMessage ? 'assistant' : 'system');
-      continuation = (await invoke(continuationMessages, continuationRoles)).response;
+      continuation = (await invoke(continuationMessages, continuationRoles, activeProfile === fallbackProfile)).response;
       followupRounds++;
       signal.throwIfAborted();
     }
