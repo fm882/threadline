@@ -8,6 +8,7 @@ import { ContextBudgetError } from '../src/research/context-budget.js';
 
 it('parses JSON after discarding model reasoning and response wrappers', () => {
   expect(parsePromptedJson('<thinking>internal note</thinking><response>```json\n{"ok":true}\n```</response>')).toEqual({ ok: true });
+  expect(parsePromptedJson('Here is the structured answer:\n```json\n{"ok":true}\n```\nDone.')).toEqual({ ok: true });
 });
 
 it('performs a model tool-call and result continuation with run-owned evidence', async () => {

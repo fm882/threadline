@@ -29,7 +29,26 @@ export function parsePromptedJson(content: string): unknown {
   let response = content.trim().replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
   response = response.replace(/^<response>\s*([\s\S]*?)\s*<\/response>$/i, '$1').trim();
   response = response.replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1').trim();
-  return JSON.parse(response);
+  try { return JSON.parse(response); } catch {}
+  for (let start = response.indexOf('{'); start >= 0; start = response.indexOf('{', start + 1)) {
+    let depth = 0, inString = false, escaped = false;
+    for (let index = start; index < response.length; index++) {
+      const char = response[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '{') depth++;
+      else if (char === '}' && --depth === 0) {
+        const candidate = response.slice(start, index + 1);
+        try { return JSON.parse(candidate); } catch { break; }
+      }
+    }
+  }
+  throw new SyntaxError('No valid JSON object found in the model response');
 }
 export type ResearchAnswer = { content: string; claims: { claim: string; evidenceIds: string[] }[]; comparisons?: ResearchComparison[] };
 
