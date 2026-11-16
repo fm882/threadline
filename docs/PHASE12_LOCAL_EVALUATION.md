@@ -35,3 +35,11 @@ Slow-consumer delivery, reconnect replay, concurrent indexing, and a dependency 
 - The last-Tuesday Postgres question retrieves its intended discussion, cites the current Neon and Supabase fixture observations, and labels the earlier price baseline unsupported.
 
 These tests verify retrieval, evidence linking, and honest comparison behavior. The generated prices, releases, and search observations are fixtures; they are not live provider research or claims about current vendor offerings.
+
+## Reproduction checks
+
+- `npm run typecheck` — passed.
+- `npm test` — 29 files, 147 tests passed. The suite includes ownership isolation, invalid and cross-run citation rejection, concurrent duplicate-publication protection, incompatible-vector filtering, required-subject coverage, recall deletion races, and process-restart recovery.
+- `npm run test:research-browser` — passed, including the three assignment scenarios above and the existing source-inspection/restart/continuation flow.
+- Startup smoke check with isolated temporary storage and an intentionally unavailable local gateway — Vite and the API started; `/health/live` returned 200 and `/health/ready` returned 503 with an actionable “Start the gateway and check INFERENCE_BASE_URL” error. No inference or search call was made.
+- Clean-start prerequisites and credentials are documented in [README](../README.md), [.env.example](../.env.example), and [gateway setup](../infra/litellm/README.md). Research fixtures are enabled only by the dedicated browser harness and a separate temporary data directory; the application runtime does not substitute fixtures for a missing provider.

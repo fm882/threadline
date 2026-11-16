@@ -318,9 +318,9 @@ A reviewer starts from a clean checkout, follows the local setup, and runs the t
 
 ### Acceptance criteria
 
-- [ ] The clean-start walkthrough works with explicit gateway/search prerequisites, documents every needed credential, and never silently swaps fixtures into a live research interaction.
+- [x] The clean-start walkthrough works with explicit gateway/search prerequisites, documents every needed credential, and never silently swaps fixtures into a live research interaction. Startup/readiness and fixture-separation evidence: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md), [README](../README.md), and [gateway setup](../infra/litellm/README.md).
 - [x] The CRM shortlist, dated-question verification, and Postgres-hosting comparison scenarios recover the intended originals and produce evidence-qualified answers. Browser fixture evidence and source limits: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md).
-- [ ] All earlier release-blocking fixtures pass: ownership isolation, invalid citations, duplicate publication, vector incompatibility, omitted subjects, deletion races, and local recovery.
+- [x] All earlier release-blocking fixtures pass: ownership isolation, invalid citations, duplicate publication, vector incompatibility, omitted subjects, deletion races, and local recovery. Current full-suite results and covered fixture names: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md).
 - [x] Run the mocked workload of 100 connected clients and 10 active research turns with indexing. Report hardware, history size, payloads, cache conditions, acknowledgement/first-answer/completion p50/p95, errors, and backlog without implying hosted capacity. One local synthetic run and limitations: [Phase 12 local evaluation](../docs/PHASE12_LOCAL_EVALUATION.md).
 - [ ] Exercise slow consumers, reconnect bursts, process crashes, and dependency outages under the local workload; report limitations rather than hiding failed targets.
 - [ ] Separately record bounded live-provider compatibility and research-quality results with model/configuration versions, usage, and cost-estimation limits. Establish the experiment spend allocation before running the paid evaluation batch.
