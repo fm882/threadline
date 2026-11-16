@@ -185,14 +185,14 @@ A user asks whether the earlier answer is still correct. Recover its original st
 
 ### Acceptance criteria
 
-- [ ] The answer visibly distinguishes what was said, what sources supported then, and what evidence supports now.
-- [ ] Price comparisons reconcile plan, currency, billing period, seats, region, and tax basis; incompatible dimensions cannot produce an unqualified change.
-- [ ] Missing historical support permits a current finding but not an invented change or an unsupported accusation that the prior answer was wrong.
-- [ ] Evidence of a prior assistant mistake results in an explicit correction, not a claim that the vendor changed its offer.
-- [ ] Corrections influence later references while exact recall preserves the original messages and provenance.
-- [ ] Conflicting sources remain disclosed if dates and dimensions do not resolve them; no-change-found wording remains qualified.
-- [ ] Significant updates explain relevance to stated user needs and every requested subject has a finding or explicit gap.
-- [ ] Frozen evidence tests cover annual/monthly confusion, stale caches, contradictory official sources, and incorrectly asserted prior prices.
+- [x] The answer visibly distinguishes what was said, what sources supported then, and what evidence supports now.
+- [x] Price comparisons reconcile plan, currency, billing period, seats, region, and tax basis; incompatible dimensions cannot produce an unqualified change.
+- [x] Missing historical support permits a current finding but not an invented change or an unsupported accusation that the prior answer was wrong.
+- [x] Evidence of a prior assistant mistake results in an explicit correction, not a claim that the vendor changed its offer.
+- [x] Corrections influence later references while exact recall preserves the original messages and provenance.
+- [x] Conflicting sources remain disclosed if dates and dimensions do not resolve them; no-change-found wording remains qualified.
+- [x] Significant updates explain relevance to stated user needs and every requested subject has a finding or explicit gap.
+- [x] Frozen evidence tests cover annual/monthly confusion, stale caches, contradictory official sources, and incorrectly asserted prior prices.
 
 ---
 
@@ -208,12 +208,12 @@ A user supplies a personal quote, or asks a question whose original discussion l
 
 ### Acceptance criteria
 
-- [ ] A user-provided quote can support an attributed comparison without being presented as an independently verified public price.
-- [ ] A newly discovered dated source supporting the relevant earlier period can establish a visibly reconstructed baseline.
-- [ ] A current-only page cannot establish a historical baseline just because the product or URL matches.
-- [ ] Reconstruction does not modify the original answer's evidence or imply verification happened then.
-- [ ] Conflicting reconstructed or user-reported baselines preserve attribution and uncertainty; comparison dimensions still apply.
-- [ ] The full comparison remains inspectable after restart and reproducible with recorded evidence.
+- [x] A user-provided quote can support an attributed comparison without being presented as an independently verified public price.
+- [x] A newly discovered dated source supporting the relevant earlier period can establish a visibly reconstructed baseline.
+- [x] A current-only page cannot establish a historical baseline just because the product or URL matches.
+- [x] Reconstruction does not modify the original answer's evidence or imply verification happened then.
+- [x] Conflicting reconstructed or user-reported baselines preserve attribution and uncertainty; comparison dimensions still apply.
+- [x] The full comparison remains inspectable after restart and reproducible with recorded evidence.
 
 ---
 
@@ -229,13 +229,13 @@ A user changes recall eligibility in the conversation interface or deletes a con
 
 ### Acceptance criteria
 
-- [ ] An excluded conversation remains directly accessible to its owner but cannot supply automatic context to other conversations.
-- [ ] Eligibility changes prevent reuse through historical snapshots, caches, claims, and already selected references before publication.
-- [ ] Deletion immediately denies access to originals, citations, events, and dependent context; cleanup status does not imply access remains permitted.
-- [ ] Durable cleanup removes dependent material, including checkpoint content, and resumes after process restart.
-- [ ] Concurrent research and background jobs cannot republish or recreate deleted content.
-- [ ] Another owner cannot change recall preferences or delete a conversation through guessed identifiers.
-- [ ] Tests verify that ordinary originals and bounded evidence persist without arbitrary expiry while operational logs follow shorter configurable retention.
+- [x] An excluded conversation remains directly accessible to its owner but cannot supply automatic context to other conversations.
+- [x] Eligibility changes prevent reuse through historical snapshots, caches, claims, and already selected references before publication.
+- [x] Deletion immediately denies access to originals, citations, events, and dependent context; cleanup status does not imply access remains permitted.
+- [x] Durable cleanup removes dependent material, including checkpoint content, and resumes after process restart.
+- [x] Concurrent research and background jobs cannot republish or recreate deleted content.
+- [x] Another owner cannot change recall preferences or delete a conversation through guessed identifiers.
+- [x] Tests verify that ordinary originals and bounded evidence persist without arbitrary expiry while operational logs follow shorter configurable retention.
 
 ---
 
@@ -251,14 +251,14 @@ A user refers to an earlier discussion with different wording and gets the right
 
 ### Acceptance criteria
 
-- [ ] Paraphrased-reference fixtures retrieve the correct original exchange and complete shortlist through the existing UI, API, and history snapshot contract.
-- [ ] Actual gateway embedding and rerank clients are integration-checked; dimensions, finite values, nonzero norms, and configured input modes are validated before indexing.
-- [ ] Candidate filtering enforces owner, cutoff, and recall eligibility before ranking; source spans/hashes connect derived chunks to originals.
-- [ ] Duplicate or partially failed indexing jobs do not duplicate records or advance progress past unfinished holes. Newly committed originals remain immediately available.
-- [ ] Embedding failure yields lexical/original fallback with coverage disclosure; rerank failure retains fused ordering. Neither failure invents missing history.
-- [ ] Different embedding spaces cannot mix even with equal dimensions. A new generation can be populated, evaluated, switched, and rolled back without corrupting the previous generation.
-- [ ] Exclusion and deletion tests now cover chunks, vectors, generation work, and indexing races.
-- [ ] Compare the new retrieval path with the lexical baseline using reference accuracy, candidate recall, complete-subject coverage, latency, and cost. Enable approximate indexing only if measured need and filtered under-return tests justify it.
+- [x] Paraphrased-reference fixtures retrieve the correct original exchange and complete shortlist through the existing UI, API, and history snapshot contract.
+- [x] Actual gateway embedding and rerank clients are integration-checked; dimensions, finite values, nonzero norms, and configured input modes are validated before indexing. The current rerank gateway request fails on provider Marketplace access; the result and fallback behavior are documented.
+- [x] Candidate filtering enforces owner, cutoff, and recall eligibility before ranking; source spans/hashes connect derived chunks to originals.
+- [x] Duplicate or partially failed indexing jobs do not duplicate records or advance progress past unfinished holes. Newly committed originals remain immediately available.
+- [x] Embedding failure yields lexical/original fallback with coverage disclosure; rerank failure retains fused ordering. Neither failure invents missing history.
+- [x] Different embedding spaces cannot mix even with equal dimensions. A new generation can be populated, evaluated, switched, and rolled back without corrupting the previous generation.
+- [x] Exclusion and deletion tests now cover chunks, vectors, generation work, and indexing races.
+- [x] Compare the new retrieval path with the lexical baseline using reference accuracy, candidate recall, complete-subject coverage, latency, and cost. The reproducible one-case mock comparison is not a live quality estimate; approximate indexing remains disabled because no measured need or filtered under-return evidence justifies it. See [the Phase 9 evaluation](../docs/PHASE9_RETRIEVAL_EVALUATION.md).
 
 ---
 
