@@ -1,6 +1,6 @@
 # Time-Aware Research Agent — Product Requirements
 
-Status: implementation in progress against [the phased plan](plans/time-aware-research-agent.md). The local application and most planned acceptance criteria are implemented; the Phase 10 fallback mechanism is complete but awaits exact-route verification before it can be enabled, and bounded live-provider quality/cost evaluation remains open. The plan is the source of truth for phase evidence and unchecked criteria. This PRD is local only; it has not been published as an issue or deployed. This document alone does not authorize implementation.
+Status: implementation and bounded evaluation complete against [the phased plan](plans/time-aware-research-agent.md). The local application and planned acceptance criteria are implemented and documented. Main chat routes through Token Harbor's `deepseek-v4.1-flash:free`; the verified Nova Micro fallback, Titan embeddings, and Cohere reranking remain on Bedrock. Three live assignment scenarios completed with cited findings and explicit historical evidence gaps; provider charges remain unreconciled. See the plan and evaluation reports for evidence and remaining limitations. This PRD is local only; it has not been published as an issue or deployed.
 
 ## Problem Statement
 
@@ -18,7 +18,7 @@ Answers distinguish three layers: **what we said**, **what sources supported the
 
 Use the agreed architecture C: a stable historical-context boundary prepares a persisted per-run snapshot while a replaceable internal retriever handles lexical, semantic, temporal, and entity candidate discovery. Improving retrieval must not require rewriting turn orchestration or weakening exact-recall guarantees.
 
-Use established packages for orchestration, model clients, tracing, and inference routing: LangGraph, LangChain, LangSmith, and LiteLLM. All initial chat, embedding, and reranking inference uses AWS Bedrock through LiteLLM. Chat and embeddings use OpenAI-compatible application interfaces; reranking has its own explicit gateway interface. Local operation is the delivery target; production deployment remains future work.
+Use established packages for orchestration, model clients, tracing, and inference routing: LangGraph, LangChain, LangSmith, and LiteLLM. Main chat uses Token Harbor's OpenAI-compatible endpoint through LiteLLM; the verified fast fallback, embeddings, and reranking use AWS Bedrock. Provider keys stay at the gateway boundary. Chat and embeddings use OpenAI-compatible application interfaces; reranking has its own explicit gateway interface. Local operation is the delivery target; production deployment remains future work.
 
 ## User Stories
 
@@ -173,7 +173,7 @@ The historical-context boundary remains stable when the retriever changes. Graph
 
 ### Inference, budgets, and observability
 
-- Initial accessible model bindings are Amazon Nova Pro for main chat, Nova Micro for fast work, Titan Text Embeddings V2 with 1024 normalized dimensions, and Cohere Rerank 3.5 through Bedrock. These are verified development-access baselines, not established quality winners.
+- Current local model bindings are Token Harbor `deepseek-v4.1-flash:free` for main chat, Nova Micro through Bedrock as the separately verified fast fallback, Titan Text Embeddings V2 with 1024 normalized dimensions, and Cohere Rerank 3.5 through Bedrock. They are development routes, not established quality winners.
 - Chat and embeddings use OpenAI-compatible gateway interfaces. Reranking uses a separately configured Cohere-style gateway contract; portability does not mean every provider implements that endpoint.
 - Pin and record gateway, client, model-binding, prompt, graph, retrieval, and schema versions. Verify full tool continuation, streaming, structured-response validation, embeddings, and reranking with actual chosen clients before declaring integration complete.
 - Start with a configurable 60-second research deadline and bounded calls, rounds, queries, input/output tokens, and retries. Account for gateway retries in the total attempt budget. Enforce backpressure and share limits across graph tasks.
@@ -232,8 +232,8 @@ Real PostgreSQL concurrency, multi-process checkpoint fencing, production identi
 
 The approved [architecture](ARCHITECTURE.md) remains the detailed engineering reference; the [domain glossary](CONTEXT.md) defines shared terminology. The [assignment](problem_statement.md) supplies the Node, startup, one-tool, and eventual submission constraints. This PRD translates those decisions into product behavior and verification requirements rather than reopening the completed interview.
 
-As of 2026-11-15, the repository contains architecture documentation, local LiteLLM configuration, startup helpers, and bounded inference checks. The [verification report](docs/INFERENCE_VERIFICATION.md) records successful Nova chat/stream/tool-generation/basic-schema, Titan embedding, and Cohere rerank checks. It explicitly excludes application integration, retrieval quality, load testing, and full client compatibility. Earlier Claude routes failed an account payment prerequisite; no subscription or payment changes were made. Individual observed durations are diagnostic samples, not benchmarks.
+As of 2026-11-17, the repository contains architecture documentation, local LiteLLM configuration, startup helpers, and bounded inference checks. The [verification report](docs/INFERENCE_VERIFICATION.md) records successful Token Harbor main-chat, tool-call, and structured-output checks; Nova Micro fallback and Titan embedding checks; and the earlier Cohere rerank result. Three live assignment scenarios completed; evidence and limitations are tracked in [Phase 12 live evaluation](docs/PHASE12_LIVE_EVALUATION.md). Earlier Claude routes failed an account payment prerequisite; no subscription or payment settings were changed. Individual observed durations are diagnostic samples, not benchmarks.
 
 Deliver through vertical slices: a durable conversational research turn with citations; exact temporal recall and source provenance; cross-conversation hybrid retrieval and bounded context; resilient cancellation/recovery and privacy controls; then comparative evaluations and measured documentation. Each slice should exercise its public behavior end to end rather than completing every infrastructure layer before a usable turn exists.
 
-The eventual one-page design document must describe the implemented system, rejected alternatives, measured results, and next-week priorities. Public repository publication and submission remain separate future actions. Remaining empirical decisions include final retrieval/model choices, numeric quality and performance gates, and a bounded live-evaluation spend allocation; they do not block writing or implementing the agreed local behavior.
+The eventual one-page design document must describe the implemented system, rejected alternatives, measured results, and next-week priorities. Public repository publication and submission remain separate future actions. Remaining empirical decisions include final retrieval/model choices, broader quality evidence, tokenizer accuracy, hosted performance, and reconciliation of provider billing. The live run has narrow usage-proxy gates but no monetary-cost pass; these limitations do not change the completed local implementation status.
