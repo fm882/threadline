@@ -66,7 +66,7 @@ it('handles parallel subject searches within the shared two-query limit and pres
           const parsed = JSON.parse(item.content); return Array.isArray(parsed) ? parsed : [];
         });
         const id = evidence[0].id;
-        return { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Acme pricing remains uncertain.', kind: 'pricing', evidenceIds: [id] }], requestedSubjects: ['Acme', 'Beta', 'Gamma'], comparisons: ['Acme', 'Beta', 'Gamma'].map(subject => ({ subject, attribute: 'price', outcome: 'inconclusive', statement: `Current evidence is insufficient for ${subject}.`, baselineOrigin: 'unsupported', evidenceIds: evidence.map((item: any) => item.id).slice(0, 1) })), uncertainty: 'Gamma had no query budget.' }) };
+        return { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Unsupported CRM detail.', kind: 'other', evidenceIds: [] }, { claim: 'Acme pricing remains uncertain.', kind: 'pricing', evidenceIds: [id] }], requestedSubjects: ['Acme', 'Beta', 'Gamma'], comparisons: ['Acme', 'Beta', 'Gamma'].map(subject => ({ subject, attribute: 'price', outcome: 'inconclusive', statement: `Current evidence is insufficient for ${subject}.`, baselineOrigin: 'unsupported', evidenceIds: evidence.map((item: any) => item.id).slice(0, 1) })), uncertainty: 'Gamma had no query budget.' }) };
       })();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'tool_calls' : 'stop' }] }));
@@ -85,6 +85,8 @@ it('handles parallel subject searches within the shared two-query limit and pres
     expect((await store.researchBudget('alice', runId)).search_queries).toBe(2);
     expect((await store.researchBudget('alice', runId)).model_calls).toBe(2);
     expect(typeof result === 'object' && result.comparisons?.map(item => item.subject)).toEqual(['Acme', 'Beta', 'Gamma']);
+    expect(typeof result === 'object' && result.claims.map(item => item.claim)).toHaveLength(1);
+    expect(typeof result === 'object' && result.claims[0].claim).toContain('Acme pricing remains uncertain.');
     expect(requests).toBe(2);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
