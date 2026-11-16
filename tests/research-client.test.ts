@@ -396,8 +396,8 @@ it('stops before continuation when registered search evidence cannot fit the pro
     const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, verifyCurrent: true, contextTokens: 8000,
       search: async () => [{ url: 'https://example.com/', title: 'Large source', excerpt: `Supported evidence ${'details '.repeat(400)}`, observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
     await expect(client([{ role: 'user', content: 'current information' }], () => {}, AbortSignal.timeout(5000))).rejects.toBeInstanceOf(ContextBudgetError);
-    expect(requests).toBe(2);
-    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing', 'reviewing']);
+    expect(requests).toBe(1);
+    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing']);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 

@@ -124,7 +124,7 @@ export function qualifyComparison(comparison: ResearchComparison, cited: { title
 }
 
 export function researchClient(config: { baseURL: string; apiKey: string; model: string; searchKey: string; store: Store; owner: string; runId: string; search?: ReturnType<typeof tavilySearch>; now?: () => Date; verifyCurrent?: boolean; contextTokens?: number; fallback?: ResearchFallbackCapability }) {
-  const mainProfile: ModelProfile = { model: config.model, contextTokens: config.contextTokens || 32_000, maxOutputTokens: 2048 };
+  const mainProfile: ModelProfile = { model: config.model, contextTokens: config.contextTokens || 32_000, maxOutputTokens: 4096 };
   const fallbackProfile: ModelProfile | undefined = config.fallback;
   const models = new Map<string, ChatOpenAI>();
   const modelFor = (profile: ModelProfile) => {

@@ -60,7 +60,7 @@ it('requires an attested fallback route to be advertised before readiness', asyn
   const path = join(dir, 'manifest.json');
   await writeFile(path, JSON.stringify({
     version: 'fixture-v1',
-    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 32_000, maxOutputTokens: 2048 },
+    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 32_000, maxOutputTokens: 4096 },
     chatFallback: {
       model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true,
       contextTokens: 16_000, maxOutputTokens: 1024,
