@@ -301,7 +301,7 @@ A research run reaches its deadline or loses a dependency after finding some sup
 - [x] The user explicitly continues through normal authorized admission, producing a new run linked to the incomplete one with a fresh time and budget. Browser/API and idempotency evidence: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [x] Continuation does not rewrite the prior final answer or silently reset its deadline. Duplicate continuation submissions remain idempotent. Store and API tests: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 - [x] Reused findings retain provenance and freshness; deleted or excluded historical material is not revived through continuation ancestry. Incomplete parent evidence is never copied, and selected historical references are rechecked before continuation. See [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
-- [ ] Foreground backpressure and separate indexing limits remain effective under dependency timeouts and bounded gateway retries.
+- [x] Foreground backpressure and separate indexing limits remain effective under dependency timeouts and bounded gateway retries. Recovery integration evidence: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md); live provider retry behavior remains disabled and is not claimed.
 - [x] The UI and trace distinguish timeout, user cancellation, provider failure, and completed research with no relevant change found. Status/event and trace-stage evidence: [Phase 11 continuation report](../docs/PHASE11_CONTINUATION.md).
 
 ---

@@ -76,6 +76,42 @@ it('keeps foreground concurrency bounded while the separate indexer makes progre
   } finally { await db.close(); }
 });
 
+it('keeps backpressure and indexing effective through a dependency timeout, then frees the slot', async () => {
+  const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
+  try {
+    const store = new Store(db); await store.initialize();
+    const space = await store.createEmbeddingGeneration({ id: 'timeout-index', model: 'fixture-v1', dimensions: 3, normalized: true, queryMode: 'shared', documentMode: 'shared', chunkingVersion: 'exchange-v1' });
+    await store.activateEmbeddingGeneration(space.id, space.generation);
+    const conversation = await store.createConversation('alice');
+    const source = await store.admit('alice', conversation, 'source', 'Earlier research question');
+    await store.publish('alice', source, 'Earlier research answer.');
+    const [indexJob] = await store.pendingIndexJobs(4, space);
+    const first = await store.admit('alice', conversation, 'timeout', 'Research with a stalled dependency');
+    const laterConversation = await store.createConversation('alice');
+    const second = await store.admit('alice', laterConversation, 'after-timeout', 'A later bounded run');
+    let calls = 0, started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const client = async () => {
+      calls++;
+      if (calls === 1) { started(); return new Promise<string>(() => {}); }
+      return 'Recovered answer';
+    };
+    const runner = createChatRunner(store, saver, client, () => {}, undefined, 600);
+    const dispatcher = createDispatcher(store, runner, 1);
+    try {
+      expect(dispatcher.dispatch('alice', first)).toBe(true);
+      await entered;
+      expect(dispatcher.dispatch('alice', second)).toBe(false);
+      expect(await processIndexJob(store, indexJob, space, async inputs => inputs.map(() => [1, 0, 0]))).toBe(true);
+      expect(await store.pendingIndexJobs(4, space)).toHaveLength(0);
+      await waitFor(async () => (await store.getRun('alice', first)).status === 'incomplete');
+      expect(dispatcher.dispatch('alice', second)).toBe(true);
+      await waitFor(async () => (await store.getRun('alice', second)).status === 'completed');
+      expect(calls).toBe(2);
+    } finally { await dispatcher.shutdown(); }
+  } finally { saver.db.close(); await db.close(); }
+});
+
 it('leaves an interrupted worker active for a later recovery instead of marking it failed', async () => {
   const db = new PGlite(); const saver = SqliteSaver.fromConnString(':memory:');
   try {
