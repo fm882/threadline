@@ -9,6 +9,7 @@ export type VectorReferenceCandidate = ReferenceCandidate & { similarity: number
 
 export class Conflict extends Error {}
 export class NotFound extends Error {}
+export class RunBudgetExceeded extends Error {}
 
 const payloadHash = (input: string, verifyCurrent = false, continuationOf: string | null = null) => createHash('sha256').update(JSON.stringify(continuationOf ? { input, verifyCurrent, continuationOf } : verifyCurrent ? { input, verifyCurrent } : { input })).digest('hex');
 
@@ -89,6 +90,11 @@ export class Store {
         run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL
       );
       ALTER TABLE jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS run_budgets (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id), started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        deadline_at TIMESTAMPTZ NOT NULL, model_calls INTEGER NOT NULL DEFAULT 0,
+        search_queries INTEGER NOT NULL DEFAULT 0, prompt_bytes INTEGER NOT NULL DEFAULT 0
+      );
       CREATE TABLE IF NOT EXISTS search_queries (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), owner_id TEXT NOT NULL,
         query TEXT NOT NULL, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -172,11 +178,38 @@ export class Store {
     `);
   }
 
-  async beginAttempt(owner: string, runId: string, maximum = 2) {
-    const result = await this.db.query(`UPDATE jobs SET attempts = attempts + 1
-      WHERE run_id = $1 AND status = 'pending' AND attempts < $3
-      AND EXISTS (SELECT 1 FROM runs r JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id WHERE r.id = $1 AND r.owner_id = $2 AND r.status = 'active' AND c.deleted_at IS NULL) RETURNING attempts`, [runId, owner, maximum]);
-    return result.rows.length > 0;
+  async beginAttempt(owner: string, runId: string, maximum = 2, deadlineMs = 60_000) {
+    return this.db.transaction(async tx => {
+      const result = await tx.query(`UPDATE jobs SET attempts = attempts + 1
+        WHERE run_id = $1 AND status = 'pending' AND attempts < $3
+        AND EXISTS (SELECT 1 FROM runs r JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id WHERE r.id = $1 AND r.owner_id = $2 AND r.status = 'active' AND c.deleted_at IS NULL) RETURNING attempts`, [runId, owner, maximum]);
+      if (!result.rows.length) return false;
+      await tx.query(`INSERT INTO run_budgets (run_id, deadline_at) VALUES ($1, now() + ($2 * interval '1 millisecond')) ON CONFLICT (run_id) DO NOTHING`, [runId, deadlineMs]);
+      return true;
+    });
+  }
+
+  async researchBudget(owner: string, runId: string) {
+    const result = await this.db.query<{ started_at: Date; deadline_at: Date; model_calls: number; search_queries: number; prompt_bytes: number }>(`SELECT b.started_at, b.deadline_at, b.model_calls, b.search_queries, b.prompt_bytes
+      FROM run_budgets b JOIN runs r ON r.id = b.run_id WHERE b.run_id = $1 AND r.owner_id = $2`, [runId, owner]);
+    if (!result.rows.length) throw new NotFound('Run budget not found');
+    return result.rows[0];
+  }
+
+  async reserveResearchWork(owner: string, runId: string, work: { modelCalls?: number; searchQueries?: number; promptBytes?: number }) {
+    const modelCalls = work.modelCalls ?? 0, searchQueries = work.searchQueries ?? 0, promptBytes = work.promptBytes ?? 0;
+    await this.db.query(`INSERT INTO run_budgets (run_id, deadline_at)
+      SELECT r.id, now() + interval '60 seconds' FROM runs r WHERE r.id = $1 AND r.owner_id = $2 AND r.status = 'active'
+      ON CONFLICT (run_id) DO NOTHING`, [runId, owner]);
+    const result = await this.db.query(`UPDATE run_budgets b SET model_calls = model_calls + $3,
+        search_queries = search_queries + $4, prompt_bytes = prompt_bytes + $5
+      WHERE b.run_id = $1 AND b.deadline_at > now()
+        AND b.model_calls + $3 <= 4 AND b.search_queries + $4 <= 2 AND b.prompt_bytes + $5 <= 128_000
+        AND EXISTS (SELECT 1 FROM runs r JOIN conversations c ON c.id = r.conversation_id AND c.owner_id = r.owner_id
+          WHERE r.id = b.run_id AND r.owner_id = $2 AND r.status = 'active' AND c.deleted_at IS NULL)
+      RETURNING b.started_at, b.deadline_at, b.model_calls, b.search_queries, b.prompt_bytes`, [runId, owner, modelCalls, searchQueries, promptBytes]);
+    if (!result.rows.length) throw new RunBudgetExceeded('Research work exceeds the run deadline or shared call, query, and prompt budget');
+    return result.rows[0];
   }
 
   async pendingRuns(limit = 100) {

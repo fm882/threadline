@@ -2,13 +2,13 @@ import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { Store, type ComparisonClaim } from '../persistence/store.js';
+import { RunBudgetExceeded, Store, type ComparisonClaim } from '../persistence/store.js';
 import type { HistoryRetriever } from '../history/index.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
 import { requiresCurrentVerification } from './freshness.js';
 import { prepareExactRecall } from '../history/recall.js';
 import { historicalContextPrompt, prepareHistoricalContext } from '../history/context.js';
-import { compactChatMessages, ContextBudgetError } from './context-budget.js';
+import { compactChatMessages, ContextBudgetError, serializedPromptBudgetCost } from './context-budget.js';
 import { z } from 'zod';
 
 export type ChatMessage = { role: string; content: string };
@@ -17,7 +17,7 @@ export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => v
 
 export const MAX_INPUT_CHARS = 8_000;
 
-export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false): ChatClient {
+export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false, reserveModelCall?: (promptBytes: number) => Promise<unknown>): ChatClient {
   const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 65_000 });
   return async (messages, onChunk, signal) => {
     if (verifyCurrent || requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
@@ -26,7 +26,9 @@ export function gatewayClient(baseURL: string, apiKey: string, model: string, ve
     const historicalContext = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n');
     const conversation = messages.filter(message => message.role !== 'system').map(m => m.role === 'assistant' ? new AIMessage(m.content) : new HumanMessage(m.content));
     const system = `Web search is unavailable. For questions requiring current or externally verified information, clearly say you cannot verify it rather than presenting an unverified current claim.${historicalContext ? `\n\n${historicalContext}` : ''}`;
-    const stream = await client.stream([new SystemMessage(system), ...conversation], { signal });
+    const prompt = [new SystemMessage(system), ...conversation];
+    await reserveModelCall?.(serializedPromptBudgetCost(prompt));
+    const stream = await client.stream(prompt, { signal });
     let result = '';
     for await (const chunk of stream) {
       if (typeof chunk.content !== 'string') throw new Error('Unsupported response format');
@@ -79,6 +81,9 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
     const trace = traceTurn(run, sink, new Date(record.created_at).getTime());
+    let deadlineController: AbortController | undefined;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let runSignal = signal;
     try {
       const saved = await checkpointAnswer(checkpointer, run);
       if (saved !== null) {
@@ -86,10 +91,20 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         if (await store.publish(owner, run, typeof saved === 'string' ? saved : saved.content, typeof saved === 'string' ? [] : saved.claims, typeof saved === 'string' ? [] : saved.comparisons || [])) trace.stage('publication');
         return;
       }
+      if (!await store.beginAttempt(owner, run, 2, deadlineMs)) {
+        await store.fail(owner, run, 'The run could not be resumed within its attempt limit. Please start a new turn.');
+        return;
+      }
+      const budget = await store.researchBudget(owner, run);
+      deadlineController = new AbortController();
+      const remainingMs = Math.max(0, new Date(budget.deadline_at).getTime() - Date.now());
+      deadlineTimer = setTimeout(() => deadlineController?.abort(new Error('Deadline exceeded')), remainingMs);
+      runSignal = signal ? AbortSignal.any([signal, deadlineController.signal]) : deadlineController.signal;
+      trace.decision('research_budget', { modelCalls: budget.model_calls, searchQueries: budget.search_queries, promptBytes: budget.prompt_bytes, remainingMs });
       const { current, history: prior } = await store.context(owner, run);
       const recall = await prepareExactRecall(store, owner, run, current.content, new Date(record.created_at), record.timezone);
       if (recall !== null) {
-        signal?.throwIfAborted();
+        runSignal?.throwIfAborted();
         if (await store.publish(owner, run, recall)) trace.stage('publication');
         return;
       }
@@ -100,17 +115,17 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
         trace.decision('history_coverage', { complete: reference.coverage === 'complete' });
       }
       if (reference.kind === 'clarification_needed') {
-        signal?.throwIfAborted();
+        runSignal?.throwIfAborted();
         if (await store.publish(owner, run, `${reference.question}\n[reference:${reference.snapshotId}]`)) trace.stage('publication');
         return;
       }
       if (reference.kind === 'no_match') {
-        signal?.throwIfAborted();
+        runSignal?.throwIfAborted();
         if (await store.publish(owner, run, 'I could not find a matching earlier discussion in the retained history available to this run.')) trace.stage('publication');
         return;
       }
       if (reference.kind === 'incomplete') {
-        signal?.throwIfAborted();
+        runSignal?.throwIfAborted();
         if (await store.publish(owner, run, 'I could not search the retained history completely, so I cannot determine which discussion you meant. Please try again with a topic or date.')) trace.stage('publication');
         return;
       }
@@ -141,30 +156,29 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       if (compiled.removedPairs) trace.stage('compaction');
       trace.decision('context_budget', { removedPairs: compiled.removedPairs, inputCost: compiled.inputCost, availableCost: compiled.availableCost });
       selected.splice(0, selected.length, ...compiled.messages);
-      signal?.throwIfAborted();
-      if (!await store.beginAttempt(owner, run)) {
-        await store.fail(owner, run, 'The run could not be resumed within its attempt limit. Please start a new turn.');
-        return;
-      }
+      runSignal?.throwIfAborted();
       trace.stage('inference');
       const graph = new StateGraph(State)
-        .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), deadlineMs, signal) }))
+        .addNode('chat', async state => ({ answer: await invokeWithinDeadline(client, state.messages, chunk => onChunk(run, chunk), Math.max(1, new Date(budget.deadline_at).getTime() - Date.now()), runSignal) }))
         .addEdge(START, 'chat').addEdge('chat', END).compile({ checkpointer });
       const output = await graph.invoke({ messages: selected }, { configurable: { thread_id: run } });
-      signal?.throwIfAborted();
+      runSignal?.throwIfAborted();
       const answer = typeof output.answer === 'string' ? output.answer : output.answer.content;
       const published = referenceSnapshotId ? `${answer}\n[reference:${referenceSnapshotId}]` : answer;
       if (await store.publish(owner, run, published, typeof output.answer === 'string' ? [] : output.answer.claims, typeof output.answer === 'string' ? [] : output.answer.comparisons || [])) trace.stage('publication');
     } catch (error) {
       // Never persist raw provider errors, which may include credentials or request content.
-      if (!signal?.aborted) {
+      const deadlineExpired = Boolean(deadlineController?.signal.aborted && !signal?.aborted) || (error instanceof Error && error.message === 'Deadline exceeded');
+      if (deadlineExpired) {
+        if (await store.publishIncomplete(owner, run, 'Research reached its time limit before a verified answer was ready. No supported partial findings are available yet. Continue research with a fresh time limit, or narrow the question.')) trace.stage('incomplete');
+      } else if (!signal?.aborted) {
         if (error instanceof ContextBudgetError) {
           if (await store.publish(owner, run, 'The requested history and instructions exceed the configured context limit. Narrow the topic or date so I can keep the original evidence and answer safely.')) trace.stage('publication');
-        } else if (error instanceof Error && error.message === 'Deadline exceeded') {
-          if (await store.publishIncomplete(owner, run, 'Research reached its time limit before a verified answer was ready. No supported partial findings are available yet. Continue research with a fresh time limit, or narrow the question.')) trace.stage('incomplete');
+        } else if (error instanceof RunBudgetExceeded) {
+          if (await store.publishIncomplete(owner, run, 'Research reached a shared call, query, or context budget before a verified answer was ready. No supported partial findings are available yet. Continue with a fresh budget, or narrow the question.')) trace.stage('incomplete');
         }
         else { trace.stage('failure'); await store.fail(owner, run, 'The research provider failed before a verified answer was ready. Check gateway and search configuration, then retry.'); }
       }
-    } finally { if (signal?.aborted) trace.stage('cancelled'); trace.finish(); }
+    } finally { if (deadlineTimer) clearTimeout(deadlineTimer); if (signal?.aborted) trace.stage('cancelled'); trace.finish(); }
   };
 }

@@ -1,7 +1,7 @@
 import { it, expect } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
-import { Store, Conflict, NotFound } from '../src/persistence/store.js';
+import { Store, Conflict, NotFound, RunBudgetExceeded } from '../src/persistence/store.js';
 import { createChatRunner } from '../src/research/chat.js';
 import { createApp } from '../src/api/app.js';
 
@@ -18,6 +18,29 @@ it('turns a run deadline into an explicit incomplete terminal result, distinct f
     expect((await store.events('alice', run)).at(-1)?.kind).toBe('incomplete');
     expect((await store.messages('alice', conversation)).at(-1)?.content).toContain('No supported partial findings are available yet');
   } finally { saver.db.close(); await db.close(); }
+});
+
+it('keeps deadline and call, query, and prompt limits shared across worker retries', async () => {
+  const db = new PGlite();
+  try {
+    const store = new Store(db); await store.initialize();
+    const conversation = await store.createConversation('alice');
+    const run = await store.admit('alice', conversation, 'budgeted', 'Research CRM pricing.');
+    expect(await store.beginAttempt('alice', run, 2, 60_000)).toBe(true);
+    const first = await store.researchBudget('alice', run);
+    await store.reserveResearchWork('alice', run, { modelCalls: 1, promptBytes: 32_000 });
+    await store.reserveResearchWork('alice', run, { searchQueries: 1 });
+    await store.reserveResearchWork('alice', run, { modelCalls: 1, promptBytes: 32_000 });
+    await store.reserveResearchWork('alice', run, { modelCalls: 1, promptBytes: 32_000, searchQueries: 1 });
+    await store.reserveResearchWork('alice', run, { modelCalls: 1, promptBytes: 32_000 });
+    await expect(store.reserveResearchWork('alice', run, { modelCalls: 1 })).rejects.toBeInstanceOf(RunBudgetExceeded);
+    await expect(store.reserveResearchWork('alice', run, { searchQueries: 1 })).rejects.toBeInstanceOf(RunBudgetExceeded);
+    expect(await store.beginAttempt('alice', run, 2, 60_000)).toBe(true);
+    const retried = await store.researchBudget('alice', run);
+    expect(retried.deadline_at.getTime()).toBe(first.deadline_at.getTime());
+    expect(retried).toMatchObject({ model_calls: 4, search_queries: 2, prompt_bytes: 128_000 });
+    expect(await store.beginAttempt('alice', run, 2, 60_000)).toBe(false);
+  } finally { await db.close(); }
 });
 
 it('admits an owner-scoped continuation as a fresh linked run and keeps retries idempotent', async () => {
