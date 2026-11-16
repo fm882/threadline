@@ -2,15 +2,25 @@ import { serve } from '@hono/node-server';
 import { PGlite } from '@electric-sql/pglite';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createApp, chunks } from '../src/api/app.js';
 import { Store } from '../src/persistence/store.js';
 import { createChatRunner } from '../src/research/chat.js';
 import { researchClient } from '../src/research/research-client.js';
 import { createHybridHistoryRetriever, processIndexJob } from '../src/history/index.js';
+import { gatewayConfig } from '../src/inference/readiness.js';
+import { tavilySearch } from '../src/search/tavily.js';
 import type { ChatMessage } from '../src/research/chat.js';
 
 const dir = process.env.APP_DATA_DIR!;
 const scenarioFixtures = process.env.MINMI_ASSIGNMENT_FIXTURES === '1';
+const liveAssignments = process.env.MINMI_LIVE_ASSIGNMENTS === '1';
+const liveConfig = liveAssignments ? gatewayConfig(process.env) : null;
+if (liveAssignments && liveConfig?.error) throw new Error(liveConfig.error);
+if (liveAssignments && !process.env.TAVILY_API_KEY) throw new Error('TAVILY_API_KEY is required for live assignment evaluation.');
+const liveRuns: object[] = liveAssignments
+  ? (() => { try { return JSON.parse(readFileSync(join(dir, 'live-evaluation-runs.json'), 'utf8')) as object[]; } catch { return []; } })()
+  : [];
 const db = new PGlite(join(dir, 'app-db'));
 const store = new Store(db); await store.initialize();
 const space = await store.createEmbeddingGeneration({ id: 'browser-fixture-space', model: 'fixture-embed-v1', dimensions: 3, normalized: true, queryMode: 'shared', documentMode: 'shared', chunkingVersion: 'exchange-v1' });
@@ -52,8 +62,7 @@ const run = async (owner: string, runId: string) => {
     await store.finishSearch(owner, runId, searchId, 'completed');
     await store.registerEvidence(owner, runId, [{ url: 'https://example.com/acme', title: 'Acme CRM pricing', excerpt: 'Acme CRM Growth costs USD 12 per seat monthly before tax.', observedAt: new Date().toISOString(), provider: 'tavily', representation: 'search_snippet' }], searchId);
   }
-  const client = researchClient({ baseURL: process.env.INFERENCE_BASE_URL!, apiKey: 'fixture', model: 'chat-main-v1', searchKey: 'fixture', owner, runId, store, verifyCurrent: record.verify_current,
-    search: async query => {
+  const fixtureSearch = async (query: string) => {
       const observedAt = new Date().toISOString();
       if (scenarioFixtures) {
         const items = /postgres|neon|supabase/i.test(query)
@@ -62,7 +71,10 @@ const run = async (owner: string, runId: string) => {
         return items.map(([title, excerpt], index) => ({ url: `https://example.com/assignment/${index}`, title, excerpt, observedAt, provider: 'tavily' as const, representation: 'search_snippet' as const }));
       }
       return [{ url: 'https://example.com/', title: 'Acme Basic official pricing', excerpt: 'Acme Basic plan is USD 12 per seat monthly for US customers, before tax. <img src=x onerror=alert(1)> [bad](javascript:alert(1))', observedAt, provider: 'tavily', representation: 'search_snippet' }];
-    } });
+    };
+  const client = researchClient({ baseURL: liveConfig?.base || process.env.INFERENCE_BASE_URL!, apiKey: liveConfig?.key || 'fixture', model: liveConfig?.model || 'chat-main-v1', searchKey: process.env.TAVILY_API_KEY || 'fixture', owner, runId, store, verifyCurrent: record.verify_current,
+    contextTokens: liveConfig?.contextTokens, fallback: liveConfig?.fallback,
+    search: liveAssignments ? tavilySearch(process.env.TAVILY_API_KEY!) : fixtureSearch });
   const scriptedClient = async (messages: ChatMessage[], onChunk: (chunk: string) => void, signal: AbortSignal) => {
     const historyContext = messages.find(message => message.role === 'system' && message.content.includes('Authorized historical context'));
     const userMessage = messages.filter(message => message.role === 'user').at(-1)?.content || '';
@@ -70,7 +82,30 @@ const run = async (owner: string, runId: string) => {
     if (historyContext && /customer relationship/i.test(userMessage)) { signal.throwIfAborted(); const answer = 'We previously compared Acme CRM and Northstar CRM for the nonprofit.'; onChunk(answer); return answer; }
     return client(messages, onChunk, signal);
   };
-  await createChatRunner(store, saver, scriptedClient, (id, chunk) => chunks.emit(id, chunk), undefined, 60_000, historyRetriever)(owner, runId);
+  await createChatRunner(store, saver, scriptedClient, (id, chunk) => chunks.emit(id, chunk), undefined, 60_000, historyRetriever, liveConfig?.contextTokens)(owner, runId);
+  if (liveAssignments) {
+    const result = await store.getRun(owner, runId);
+    const budget = await store.researchBudget(owner, runId);
+    const messages = await store.messages(owner, result.conversation_id);
+    const finalMessage = messages.filter(message => message.run_id === runId && message.role === 'assistant').at(-1);
+    const evidence = await store.evidenceForRun(owner, runId);
+    const searches = await db.query<{ query: string; status: string; created_at: Date }>('SELECT query, status, created_at FROM search_queries WHERE run_id = $1 ORDER BY created_at', [runId]);
+    const comparisons = await db.query('SELECT subject, attribute, outcome, statement, evidence_ids, prior_dimensions, current_dimensions, baseline_origin, baseline_statement, baseline_period, historical_evidence_ids FROM answer_comparisons WHERE run_id = $1 ORDER BY created_at', [runId]);
+    const claims = await db.query(`SELECT ac.claim, COALESCE(jsonb_agg(ce.evidence_id) FILTER (WHERE ce.evidence_id IS NOT NULL), '[]'::jsonb) AS evidence_ids
+      FROM answer_claims ac LEFT JOIN claim_evidence ce ON ce.claim_id = ac.id WHERE ac.run_id = $1 GROUP BY ac.id ORDER BY ac.id`, [runId]);
+    liveRuns.push({
+      runId, status: result.status, requestedSubjects: budget.requested_subjects,
+      modelCalls: budget.model_calls, searchQueries: budget.search_queries, promptBytes: budget.prompt_bytes,
+      startedAt: result.created_at, finishedAt: new Date().toISOString(),
+      answerLength: finalMessage?.content.length || 0, citationCount: finalMessage?.citation_ids?.length || 0,
+      answer: finalMessage?.content || '',
+      searches: searches.rows.map(item => ({ query: item.query, status: item.status, createdAt: item.created_at, provider: 'tavily', depth: 'basic', cacheStatus: 'bypassed' })),
+      claims: claims.rows,
+      comparisons: comparisons.rows,
+      evidence: evidence.map(item => ({ id: item.id, title: item.title, url: item.url, excerpt: item.excerpt.slice(0, 600), observedAt: item.observed_at, provider: item.provider, representation: item.representation })),
+    });
+    writeFileSync(join(dir, 'live-evaluation-runs.json'), `${JSON.stringify(liveRuns, null, 2)}\n`, { mode: 0o600 });
+  }
 };
 const app = createApp({ store, owner: () => 'local-development-user', ready: () => null, run });
 const server = serve({ fetch: app.fetch, port: Number(process.env.PORT || 3000), hostname: '127.0.0.1' });

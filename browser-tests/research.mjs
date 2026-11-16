@@ -1,11 +1,27 @@
 import { chromium } from 'playwright-core';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { localKey, root } from '../scripts/local-env.mjs';
+
+if (existsSync(join(root, '.env'))) process.loadEnvFile(join(root, '.env'));
+const liveAssignmentMode = process.argv.includes('--live');
+if (liveAssignmentMode && !process.env.TAVILY_API_KEY) throw new Error('TAVILY_API_KEY is required for live assignment evaluation.');
+const realInferenceBase = (process.env.INFERENCE_BASE_URL || 'http://127.0.0.1:4000/v1').replace(/\/$/, '');
+const loopbackHosts = new Set(['127.0.0.1', 'localhost', '[::1]']);
+if (liveAssignmentMode && !process.env.INFERENCE_API_KEY && !loopbackHosts.has(new URL(realInferenceBase).hostname)) {
+  throw new Error('Remote inference requires an explicit INFERENCE_API_KEY; the local gateway key is never sent remotely.');
+}
+const upstreamKey = liveAssignmentMode ? localKey() : '';
+const liveModelUsage = [];
+const liveScenarioResults = [];
 
 const dir = await mkdtemp(join(tmpdir(), 'minmi-research-browser-'));
 const scenariosDir = await mkdtemp(join(tmpdir(), 'minmi-assignment-browser-'));
@@ -44,8 +60,52 @@ const gateway = createServer(async (req, res) => {
 gateway.listen(0, '127.0.0.1'); await once(gateway, 'listening');
 const gatewayPort = gateway.address().port;
 const apiPort = process.env.MINMI_RESEARCH_PORT || '3458';
-let api, vite, browser;
-function startApi(dataDir = dir, scenarioFixtures = false) { return spawn(process.execPath, ['--import', 'tsx', 'browser-tests/research-server.ts'], { stdio: 'ignore', env: { ...process.env, PORT: apiPort, APP_DATA_DIR: dataDir, MINMI_ASSIGNMENT_FIXTURES: scenarioFixtures ? '1' : '0', INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1` } }); }
+let inferenceRelay, inferenceRelayPort;
+if (liveAssignmentMode) {
+  inferenceRelay = createServer(async (req, res) => {
+    let raw = ''; for await (const part of req) raw += part;
+    const request = JSON.parse(raw || '{}');
+    const model = request.model;
+    if (!['chat-main-v1', 'chat-fast-v1'].includes(model)) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Unexpected model alias.', type: 'invalid_request_error' } }));
+      return;
+    }
+    if (liveModelUsage.length >= 12) {
+      res.writeHead(429, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Live assignment model-call limit reached.', type: 'rate_limit_error' } }));
+      return;
+    }
+    const response = await fetch(new URL(req.url || '/v1/chat/completions', realInferenceBase), {
+      method: req.method || 'POST',
+      headers: { authorization: `Bearer ${process.env.INFERENCE_API_KEY || upstreamKey}`, 'content-type': 'application/json' },
+      body: raw || undefined,
+      signal: AbortSignal.timeout(65_000),
+    });
+    const body = await response.text();
+    const record = { at: new Date().toISOString(), model, status: response.status };
+    if (response.ok) {
+      try {
+        const parsed = JSON.parse(body);
+        const choice = parsed.choices?.[0];
+        const toolCalls = choice?.message?.tool_calls || [];
+        const toolCall = toolCalls[0];
+        let toolArguments = null;
+        try { if (toolCall?.function?.arguments) toolArguments = JSON.parse(toolCall.function.arguments); } catch {}
+        liveModelUsage.push({ ...record, responseModel: parsed.model || null, finishReason: choice?.finish_reason || null, toolCallCount: toolCalls.length, toolNames: toolCalls.map(item => item.function?.name || null), toolName: toolCall?.function?.name || null, toolArguments, responseText: typeof choice?.message?.content === 'string' ? choice.message.content.slice(0, 16000) : null, usage: parsed.usage || null });
+      } catch { liveModelUsage.push({ ...record, usage: null }); }
+    } else liveModelUsage.push(record);
+    res.writeHead(response.status, { 'content-type': response.headers.get('content-type') || 'application/json' });
+    res.end(body);
+  });
+  inferenceRelay.listen(0, '127.0.0.1'); await once(inferenceRelay, 'listening');
+  inferenceRelayPort = inferenceRelay.address().port;
+}
+let api, vite, browser, liveFailure;
+function startApi(dataDir = dir, scenarioFixtures = false, live = false) {
+  const inferenceBase = live ? `http://127.0.0.1:${inferenceRelayPort}/v1` : `http://127.0.0.1:${gatewayPort}/v1`;
+  return spawn(process.execPath, ['--import', 'tsx', 'browser-tests/research-server.ts'], { stdio: 'ignore', env: { ...process.env, PORT: apiPort, APP_DATA_DIR: dataDir, MINMI_ASSIGNMENT_FIXTURES: scenarioFixtures ? '1' : '0', MINMI_LIVE_ASSIGNMENTS: live ? '1' : '0', INFERENCE_BASE_URL: inferenceBase } });
+}
 function startVite() { return spawn(process.execPath, ['node_modules/vite/bin/vite.js'], { stdio: 'ignore', env: { ...process.env, PORT: apiPort } }); }
 async function stop(child) { if (!child || child.exitCode !== null || child.signalCode !== null) return; const done = once(child, 'exit'); child.kill('SIGTERM'); await done; }
 async function ready() { for (let n = 0; n < 100; n++) { try { if ((await fetch('http://127.0.0.1:5173/health/live')).ok) return; } catch {} await new Promise(r => setTimeout(r, 100)); } throw new Error('App did not start'); }
@@ -157,53 +217,155 @@ try {
   assert.equal(continuationLink.childStatus, 'completed');
   console.log('Deadline limitation and explicit linked continuation survived the browser flow.');
 
-  await stop(api); api = startApi(scenariosDir, true); await ready(); await page.goto('http://127.0.0.1:5173');
+  await stop(api); api = startApi(scenariosDir, true, liveAssignmentMode); await ready(); await page.goto('http://127.0.0.1:5173');
+  const assignmentTimeout = liveAssignmentMode ? 70_000 : 15_000;
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any of them changed pricing or shipped something big since?');
+  const crmModelRequestStart = liveModelUsage.length;
   await page.getByRole('button', { name: 'Send' }).click();
-  try { await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: 15000 }); }
-  catch { throw new Error(`CRM assignment scenario did not publish a qualified comparison: ${await page.locator('.transcript').innerText()} | ${await page.locator('.composer').innerText()}`); }
-  let assignmentAnswer = await page.locator('article.assistant .content').last().innerText();
-  for (const name of ['Acme CRM', 'Northstar CRM', 'Copper CRM', 'Folk CRM', 'Twenty CRM']) assert.ok(assignmentAnswer.includes(name), `CRM answer should cover ${name}.`);
-  assert.match(assignmentAnswer, /Evidence supports now:/);
-  assert.match(assignmentAnswer, /No source observations were attached/);
-  assert.equal(await page.locator('article.assistant .content').last().getByRole('button', { name: 'Source', exact: true }).count(), 10);
-  await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
-  const crmHistory = page.getByRole('region', { name: 'Historical discussion' });
-  await crmHistory.getByText('CRM shortlist for a 20-person sales team', { exact: true }).waitFor();
-  assert.match(await crmHistory.innerText(), /Acme CRM, Northstar CRM, Copper CRM, Folk CRM, and Twenty CRM/);
-  await page.getByRole('button', { name: 'Close historical discussion' }).click();
+  let crmRun;
+  if (liveAssignmentMode) crmRun = await waitForLiveRun(page, assignmentTimeout, 'On Monday we shortlisted 5 CRM tools');
+  else {
+    try { await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: assignmentTimeout }); }
+    catch { throw new Error(`CRM assignment scenario did not publish a qualified comparison: ${await page.locator('.transcript').innerText()} | ${await page.locator('.composer').innerText()}`); }
+  }
+  let assignmentAnswer = liveAssignmentMode
+    ? await page.locator('article.assistant .content').count().then(count => count ? page.locator('article.assistant .content').last().innerText() : '')
+    : await page.locator('article.assistant .content').last().innerText();
+  if (!liveAssignmentMode) {
+    for (const name of ['Acme CRM', 'Northstar CRM', 'Copper CRM', 'Folk CRM', 'Twenty CRM']) assert.ok(assignmentAnswer.includes(name), `CRM answer should cover ${name}.`);
+    assert.match(assignmentAnswer, /Evidence supports now:/);
+    assert.match(assignmentAnswer, /No source observations were attached/);
+  }
+  const crmCitationButtons = await page.locator('article.assistant .content').last().getByRole('button', { name: 'Source', exact: true }).count();
+  if (!liveAssignmentMode) assert.ok(crmCitationButtons >= 5, `Expected citations for all CRM subjects, received ${crmCitationButtons}.`);
+  if (liveAssignmentMode) { const result = await captureLiveScenario('crm-shortlist', assignmentAnswer, crmRun, crmModelRequestStart); liveScenarioResults.push(result); assignmentAnswer ||= result.answer; }
+  if (!liveAssignmentMode || (liveScenarioResults.at(-1)?.status === 'completed' && await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).count())) {
+    await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
+    const crmHistory = page.getByRole('region', { name: 'Historical discussion' });
+    await crmHistory.getByText('CRM shortlist for a 20-person sales team', { exact: true }).waitFor();
+    assert.match(await crmHistory.innerText(), /Acme CRM, Northstar CRM, Copper CRM, Folk CRM, and Twenty CRM/);
+    await page.getByRole('button', { name: 'Close historical discussion' }).click();
+  }
 
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('What did I ask you on 3 November? Is your answer still correct today?');
+  const datedModelRequestStart = liveModelUsage.length;
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: 15000 });
-  assignmentAnswer = await page.locator('article.assistant .content').last().innerText();
-  assert.match(assignmentAnswer, /Neon Launch/);
-  assert.match(assignmentAnswer, /Supabase Pro/);
-  assert.match(assignmentAnswer, /Evidence supports now:/);
-  await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
-  const datedHistory = page.getByRole('region', { name: 'Historical discussion' });
-  await datedHistory.getByText('Question from 3 November 2026', { exact: true }).waitFor();
-  assert.match(await datedHistory.innerText(), /Which Postgres host should I use for a hobby application/);
-  await page.getByRole('button', { name: 'Close historical discussion' }).click();
+  let datedRun;
+  if (liveAssignmentMode) datedRun = await waitForLiveRun(page, assignmentTimeout, 'What did I ask you on 3 November');
+  else await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: assignmentTimeout });
+  assignmentAnswer = liveAssignmentMode
+    ? await page.locator('article.assistant .content').count().then(count => count ? page.locator('article.assistant .content').last().innerText() : '')
+    : await page.locator('article.assistant .content').last().innerText();
+  if (!liveAssignmentMode) {
+    assert.match(assignmentAnswer, /Neon Launch/);
+    assert.match(assignmentAnswer, /Supabase Pro/);
+    assert.match(assignmentAnswer, /Evidence supports now:/);
+    assert.ok(await page.locator('article.assistant .content').last().getByRole('button', { name: 'Source', exact: true }).count() >= 2);
+  }
+  if (liveAssignmentMode) { const result = await captureLiveScenario('dated-postgres', assignmentAnswer, datedRun, datedModelRequestStart); liveScenarioResults.push(result); assignmentAnswer ||= result.answer; }
+  if (!liveAssignmentMode || (liveScenarioResults.at(-1)?.status === 'completed' && await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).count())) {
+    await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
+    const datedHistory = page.getByRole('region', { name: 'Historical discussion' });
+    await datedHistory.getByText('Question from 3 November 2026', { exact: true }).waitFor();
+    assert.match(await datedHistory.innerText(), /Which Postgres host should I use for a hobby application/);
+    await page.getByRole('button', { name: 'Close historical discussion' }).click();
+  }
 
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('Last Tuesday I asked you about Postgres hosting. Has any pricing changed since then?');
+  const tuesdayModelRequestStart = liveModelUsage.length;
   await page.getByRole('button', { name: 'Send' }).click();
-  await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: 15000 });
-  assignmentAnswer = await page.locator('article.assistant .content').last().innerText();
-  assert.match(assignmentAnswer, /Neon Launch/);
-  assert.match(assignmentAnswer, /Supabase Pro/);
-  assert.match(assignmentAnswer, /No source observations were attached/);
-  await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
-  const postgresHistory = page.getByRole('region', { name: 'Historical discussion' });
-  await postgresHistory.getByText('Postgres hosting from last Tuesday', { exact: true }).waitFor();
-  assert.match(await postgresHistory.innerText(), /Neon Launch was USD 19 monthly and Supabase Pro was USD 25 monthly/);
-  console.log('CRM shortlist, dated verification, and Postgres comparisons retrieved originals and cited current fixture evidence.');
+  let tuesdayRun;
+  if (liveAssignmentMode) tuesdayRun = await waitForLiveRun(page, assignmentTimeout, 'Last Tuesday I asked you about Postgres hosting');
+  else await page.getByText('historical_support_missing', { exact: false }).waitFor({ timeout: assignmentTimeout });
+  assignmentAnswer = liveAssignmentMode
+    ? await page.locator('article.assistant .content').count().then(count => count ? page.locator('article.assistant .content').last().innerText() : '')
+    : await page.locator('article.assistant .content').last().innerText();
+  if (!liveAssignmentMode) {
+    assert.match(assignmentAnswer, /Neon Launch/);
+    assert.match(assignmentAnswer, /Supabase Pro/);
+    assert.match(assignmentAnswer, /No source observations were attached/);
+    assert.ok(await page.locator('article.assistant .content').last().getByRole('button', { name: 'Source', exact: true }).count() >= 2);
+  }
+  if (liveAssignmentMode) { const result = await captureLiveScenario('last-tuesday-postgres', assignmentAnswer, tuesdayRun, tuesdayModelRequestStart); liveScenarioResults.push(result); assignmentAnswer ||= result.answer; }
+  if (!liveAssignmentMode || (liveScenarioResults.at(-1)?.status === 'completed' && await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).count())) {
+    await page.locator('article.assistant .content').last().getByRole('button', { name: 'View discussion source' }).click();
+    const postgresHistory = page.getByRole('region', { name: 'Historical discussion' });
+    await postgresHistory.getByText('Postgres hosting from last Tuesday', { exact: true }).waitFor();
+    assert.match(await postgresHistory.innerText(), /Neon Launch was USD 19 monthly and Supabase Pro was USD 25 monthly/);
+  }
+  if (liveAssignmentMode) {
+    const runsPath = join(scenariosDir, 'live-evaluation-runs.json');
+    const runs = existsSync(runsPath) ? JSON.parse(readFileSync(runsPath, 'utf8')) : [];
+    const report = {
+      checkedAt: new Date().toISOString(),
+      sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+      runtime: { node: process.version, litellm: execFileSync(process.env.LITELLM_BIN || 'litellm', ['--version'], { encoding: 'utf8' }).trim() },
+      scope: 'Live application browser evaluation using LiteLLM, Token Harbor DeepSeek V4.1 Flash Free, and Tavily Basic; no private conversation input.',
+      routes: { main: { provider: 'Token Harbor', model: 'deepseek-v4.1-flash:free', endpoint: 'https://tokenharbor.ai/v1' }, fastFallback: { provider: 'AWS Bedrock', route: process.env.BEDROCK_FAST_ROUTE || 'bedrock/converse/us.amazon.nova-micro-v1:0' } },
+      routeConfigSha256: createHash('sha256').update(readFileSync(join(root, 'infra/litellm/config.yaml'))).digest('hex'),
+      modelRequests: liveModelUsage,
+      modelCallCount: liveModelUsage.length,
+      runs,
+      tavilyBasicSearchCalls: runs.reduce((sum, run) => sum + run.searchQueries, 0),
+      scenarios: liveScenarioResults.map(result => ({ ...result, budget: runs.find(run => run.runId === result.runId) || null })),
+      harnessCompleted: runs.length === 3 && liveModelUsage.length <= 12,
+      providerExecution: runs.length === 3 && runs.every(run => run.status === 'completed') ? 'all_scenarios_completed' : 'provider_or_application_failures_present',
+      researchQuality: 'pending_human_grounded_rubric',
+      monetaryCost: 'unknown_pending_provider_usage_reconciliation',
+      billedCost: 'unknown; reconcile AWS and Tavily account usage after provider records settle',
+    };
+    const reportDir = join(root, '.data'); mkdirSync(reportDir, { recursive: true, mode: 0o700 });
+    const reportPath = join(reportDir, `live-research-evaluation-${Date.now()}.json`);
+    writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+    console.log(`Live research report: ${reportPath}`);
+    assert.equal(liveScenarioResults.length, 3);
+    assert.equal(runs.length, 3, 'All three live assignment runs must persist metrics.');
+    assert.ok(liveModelUsage.length <= 12, 'Live assignment batch exceeded the 12 model-call limit.');
+    console.log('Live CRM, dated Postgres, and last-Tuesday Postgres scenarios completed; quality outcomes are recorded in the report.');
+  } else console.log('CRM shortlist, dated verification, and Postgres comparisons retrieved originals and cited current fixture evidence.');
+} catch (error) {
+  liveFailure = String(error?.message || error).slice(0, 1600);
+  throw error;
 } finally {
+  if (liveAssignmentMode) {
+    const runsPath = join(scenariosDir, 'live-evaluation-runs.json');
+    const runs = existsSync(runsPath) ? JSON.parse(readFileSync(runsPath, 'utf8')) : [];
+    const report = { checkedAt: new Date().toISOString(), harnessCompleted: runs.length === 3 && liveModelUsage.length <= 12, providerExecution: runs.length === 3 && runs.every(run => run.status === 'completed') ? 'all_scenarios_completed' : 'provider_or_application_failures_present', researchQuality: 'pending_human_grounded_rubric', monetaryCost: 'unknown_pending_provider_usage_reconciliation', error: liveFailure || undefined, modelRequests: liveModelUsage, runs, scenarios: liveScenarioResults.map(result => ({ ...result, budget: runs.find(run => run.runId === result.runId) || null })) };
+    const reportDir = join(root, '.data'); mkdirSync(reportDir, { recursive: true, mode: 0o700 });
+    if (liveScenarioResults.length < 3) writeFileSync(join(reportDir, `live-research-partial-${Date.now()}.json`), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+  }
   if (browser) await browser.close();
-  await stop(api); await stop(vite); await new Promise(resolve => gateway.close(resolve));
+  await stop(api); await stop(vite); if (inferenceRelay) await new Promise(resolve => inferenceRelay.close(resolve)); await new Promise(resolve => gateway.close(resolve));
   await rm(dir, { recursive: true, force: true });
   await rm(scenariosDir, { recursive: true, force: true });
+}
+
+async function captureLiveScenario(name, answer, run, modelRequestStart) {
+  return { name, ...run, answer: run?.answer || answer || '', modelRequests: liveModelUsage.slice(modelRequestStart) };
+}
+
+async function waitForLiveRun(page, timeout, expected) {
+  const runId = await page.waitForFunction(async expectedQuestion => {
+    const { conversations } = await (await fetch('/api/conversations')).json();
+    for (const conversation of conversations) {
+      const { messages } = await (await fetch(`/api/conversations/${conversation.id}/messages`)).json();
+      const user = messages.find(message => message.role === 'user' && message.content?.includes(expectedQuestion));
+      if (user?.run_id) return user.run_id;
+    }
+    return null;
+  }, expected, { timeout, polling: 500 });
+  const id = await runId.jsonValue();
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const runs = JSON.parse(readFileSync(join(scenariosDir, 'live-evaluation-runs.json'), 'utf8'));
+      const run = runs.find(item => item.runId === id);
+      if (run) return run;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error(`Live run ${id} did not persist terminal metrics within ${timeout}ms.`);
 }

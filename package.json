@@ -9,6 +9,7 @@
     "build": "vite build",
     "test:browser": "node browser-tests/chat.mjs",
     "test:research-browser": "node browser-tests/research.mjs",
+    "test:research-live": "node browser-tests/research.mjs --live",
     "evaluate:local-load": "node --import tsx scripts/evaluate-local-load.mjs",
     "verify:retrieval": "node --import tsx scripts/verify-retrieval-clients.mjs",
     "evaluate:retrieval": "node --import tsx scripts/evaluate-history-retrieval.mjs"
