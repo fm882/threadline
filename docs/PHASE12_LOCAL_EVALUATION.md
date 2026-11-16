@@ -1,0 +1,27 @@
+# Phase 12 local load evaluation
+
+Run: `npm run evaluate:local-load` on 2026-11-16. This is one local synthetic run, not a hosted capacity claim.
+
+## Workload and machine
+
+- Node v22.23.2; AMD Ryzen 5 7530U; 12 logical cores; 16,109,858,816 bytes RAM.
+- 100 initial SSE clients across 10 simultaneously active turns; configured concurrency limit 10; then 100 reconnect clients.
+- 250 historical exchanges (15,784 bytes); 55-byte request; 33,120 generated delta bytes per successful turn.
+- Cold process caches; no search cache. Synthetic workers and deterministic embeddings; zero external model calls and $0.00 provider cost.
+- One deliberately injected dependency outage; 9 completed and 1 failed; 0 connection errors. A slow reader received the canonical completion event. Indexing completed 259 messages, with no pending backlog; indexing elapsed 3,533.73 ms.
+
+## Observed latency
+
+Milliseconds, measured from each API admission or run start; completion percentiles include the nine successful runs only.
+
+| Measure | p50 | p95 | Samples |
+| --- | ---: | ---: | ---: |
+| Admission acknowledgement | 58.77 | 63.79 | 10 |
+| First streamed answer | 1,705.01 | 2,029.69 | 9 |
+| Successful completion | 2,302.36 | 2,517.53 | 9 |
+
+The reconnect burst completed in 615.52 ms; initial worker wall time after release was 532.73 ms. These timings include the local fixture's scheduling and streaming behavior and do not estimate model quality, provider cost, network latency, or multi-process capacity.
+
+## Coverage limits
+
+Slow-consumer delivery, reconnect replay, concurrent indexing, and a dependency failure are covered in this workload. Process-crash recovery remains covered by separate persistence tests, not this in-memory run. This is a baseline observation, not a regression threshold; numeric gates require a reviewed repeatable baseline and a separate bounded live-provider evaluation.

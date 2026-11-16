@@ -1,6 +1,6 @@
 # Time-aware research agent
 
-This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Phase 1 provides local chat through a browser and HTTP API. Later research and recall phases are not complete.
+This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Local browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. Phase 11 partial findings and Phase 12 evaluation still have open acceptance criteria; see the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
 
 ## Local development
 
@@ -20,6 +20,6 @@ The application uses a server-controlled single local identity and stores local 
 
 ## Verification
 
-Run `npm test` and `npm run typecheck`. Tests use local persistence and synthetic external responses. [Phase 1 verification](docs/PHASE1_VERIFICATION.md) distinguishes those tests from the bounded live checks. `node scripts/verify-chat.mjs` requires the running gateway and sends one synthetic model request that can incur a provider charge.
+Run `npm test` and `npm run typecheck`. Tests use local persistence and synthetic external responses. `npm run test:research-browser` exercises research flows in the browser with local fixtures; it does not use provider credentials. `npm run evaluate:local-load` runs the local synthetic concurrency evaluation documented in [Phase 12 local evaluation](docs/PHASE12_LOCAL_EVALUATION.md). [Phase 1 verification](docs/PHASE1_VERIFICATION.md) distinguishes local tests from bounded live checks. `node scripts/verify-chat.mjs` requires the running gateway and sends one synthetic model request that can incur a provider charge.
 
 The application is designed for local single-user development; it is not a hosted multi-user deployment. Check the plan for remaining acceptance criteria before treating a phase as complete.

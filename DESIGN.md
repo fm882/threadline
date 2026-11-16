@@ -1,0 +1,11 @@
+# Time-aware research agent
+
+The system treats research as a durable, owner-scoped run. A run records its input, time anchor, progress, source observations, validated claims, and terminal outcome. The browser streams progress and answer chunks from the same persisted run state. Local identity is single-user; hosted identity and multi-replica recovery are future work.
+
+Research uses a bounded model/search loop. Search results are stored with observation time and representation, then claim and comparison citations are checked against authorized run evidence before publication. Historical comparisons retain their original discussion and evidence links; current snippets cannot silently rewrite old prices. Where the earlier answer has no source baseline, the result must say that historical support is missing. Search content is untrusted and rendered as text.
+
+Recall combines original-message search with a versioned embedding index and optional reranking. Originals remain authoritative during index lag or provider failure. Retrieval is owner scoped, bounded, and rechecked against deletion and recall exclusions. Indexing runs separately from foreground work.
+
+Runs have persisted deadlines and cumulative attempt, model-call, search, and serialized-prompt-byte limits. Serialized bytes are only a tokenizer-independent proxy. A timed-out run records named gaps and can be continued through a newly authorized, linked run with a fresh budget. Parent partial evidence is not copied. Validated partial findings are not yet supported, so the timeout path reports that limitation honestly.
+
+The implementation favors one local service and Postgres-compatible persistence with PGlite for reproducible local checks. It defers hosted deployment, multi-user identity, multi-process guarantees, and external browser/code-execution tools. Local acceptance evidence includes browser fixtures and a synthetic 100-client/10-turn evaluation; its latency does not represent provider performance. See [local evaluation](docs/PHASE12_LOCAL_EVALUATION.md) and the [implementation plan](plans/time-aware-research-agent.md) for remaining release gates.
