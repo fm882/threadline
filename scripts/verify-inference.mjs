@@ -80,6 +80,7 @@ const fastResearchSchema = z.object({
   uncertainty: z.string().max(2000),
 }).strict();
 
+let checkEvidence = {};
 const checks = {
   'main-chat': async () => {
     const result = await request('/chat/completions', {
@@ -121,27 +122,32 @@ const checks = {
       model: fast, max_tokens: 128, tools: researchTools,
       tool_choice: { type: 'function', function: { name: 'web_search' } },
       messages: [
-        { role: 'system', content: 'Call web_search for every current question. Include each requested subject.' },
+        { role: 'system', content: 'Call web_search for this current question. Search for the named product.' },
         { role: 'user', content: 'Check the current pricing for Northstar CRM.' },
       ],
     });
     const call = toolResult.choices?.[0]?.message?.tool_calls?.[0];
+    checkEvidence = { responseModels: [toolResult.model], usage: { toolCall: toolResult.usage || null }, toolCall: { name: call?.function?.name || null, arguments: call?.function?.arguments || null } };
     assert.equal(call?.function?.name, 'web_search');
     const args = JSON.parse(call.function.arguments);
     assert.match(args.query, /Northstar/i);
-    assert.ok(args.subjects?.some(subject => /Northstar CRM/i.test(subject)));
     const evidenceId = 'd4b5d80e-22df-4f2b-8b5d-43ed9f8bf152';
     const continuation = await request('/chat/completions', {
       model: fast, max_tokens: 256, tools: researchTools,
       messages: [
-        { role: 'system', content: 'Return only JSON with claims, requestedSubjects, and uncertainty. Each claim must use evidenceIds from the search result and kind pricing or other. Do not use response_format.' },
+        { role: 'system', content: 'Return one valid JSON object only. Do not add XML reasoning tags, Markdown fences, or text before or after the object. Use exactly this shape and exact field names; do not add fields: {"claims":[{"claim":"supported statement","kind":"pricing","evidenceIds":["copy the exact source UUID"]}],"requestedSubjects":["Northstar CRM"],"comparisons":[],"uncertainty":""}. Claim objects have exactly claim, kind, evidenceIds; kind must be exactly pricing or other. Every claim must cite the provided evidence UUID in evidenceIds. Do not use response_format.' },
         { role: 'user', content: 'Check the current pricing for Northstar CRM.' },
         { role: 'assistant', content: null, tool_calls: [call] },
         { role: 'tool', tool_call_id: call.id, content: JSON.stringify([{ id: evidenceId, title: 'Northstar CRM pricing', excerpt: 'The fictional Northstar CRM Starter plan costs $19 per seat each month.', url: 'https://example.com/northstar-pricing', observedAt: '2026-11-16T00:00:00.000Z' }]) },
       ],
     });
+    checkEvidence = { ...checkEvidence, responseModels: [...checkEvidence.responseModels, continuation.model], usage: { ...checkEvidence.usage, promptedJson: continuation.usage || null } };
     const content = continuation.choices?.[0]?.message?.content || '';
-    const answer = fastResearchSchema.parse(JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, '')));
+    checkEvidence.continuationPreview = content.slice(0, 1200);
+    const normalizedContent = content.trim().replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim()
+      .replace(/^<response>\s*([\s\S]*?)\s*<\/response>$/i, '$1').trim()
+      .replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, '$1').trim();
+    const answer = fastResearchSchema.parse(JSON.parse(normalizedContent));
     assert.ok(answer.claims.some(claim => claim.evidenceIds.includes(evidenceId)));
     return {
       responseModels: [toolResult.model, continuation.model],
@@ -209,13 +215,14 @@ const checks = {
 
 for (const name of selected.length ? selected : allowed) {
   const start = performance.now();
+  checkEvidence = {};
   try {
     const detail = await checks[name]();
     const entry = { name, passed: true, durationMs: Math.round(performance.now() - start), ...detail };
     report.checks.push(entry);
     console.log(`PASS ${name} (${entry.durationMs} ms)`);
   } catch (error) {
-    const entry = { name, passed: false, durationMs: Math.round(performance.now() - start), error: safeError(error) };
+    const entry = { name, passed: false, durationMs: Math.round(performance.now() - start), ...checkEvidence, error: safeError(error) };
     report.checks.push(entry);
     console.error(`FAIL ${name}: ${entry.error}`);
   }

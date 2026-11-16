@@ -33,7 +33,7 @@ Credentials and machine-specific AWS profile names are intentionally omitted. Th
 
 These durations are individual diagnostic samples, **not** latency percentiles, service-level guarantees or throughput measurements. The embeddings had norms approximately `1.000000025` and `1.000000040`. No full vectors are included in the shared report.
 
-The verifier now has an additional `fast-research-contract` check, not included in the results above. It makes two bounded calls to the fast alias: a forced call using the application's search-tool schema, then a synthetic evidence continuation that validates the prompted JSON shape used by the app without native `response_format`. The verifier passed against a local mock OpenAI-compatible server with exactly two requests; no provider was contacted. Its compatibility with the configured Bedrock route remains unverified until the named check is run against LiteLLM; do not enable the route as a fallback based on generic model documentation alone.
+The verifier has an additional `fast-research-contract` check. Its local mock check passed earlier; a real LiteLLM/Bedrock check is recorded below.
 
 The text/stream/tool/schema calls used output limits of 64 or 128 tokens. The `web_search` tool was not executed. A valid small JSON response does not prove strict schema behavior on all inputs; schema validation remains mandatory in the application. Gateway response model fields returned logical aliases, so backend identities above come from the actual launcher/configuration used, not independent response-model attestation.
 
@@ -50,6 +50,28 @@ Those four checks returned HTTP 403 with `INVALID_PAYMENT_INSTRUMENT`, indicatin
 
 The local defaults now use the accessible Nova models. Claude routes remain commented options in `.env.example`; they must be retested after account access is resolved. The Nova choice is an accessible development baseline, not a research-quality ranking against Claude or other models.
 
+## Live follow-up: fast route and current gateway
+
+On **2026-11-16**, LiteLLM `1.103.2` was started on loopback with an existing AWS CLI profile, region `us-east-1`, and the checked-in route configuration. No credentials or account identifiers were recorded. The configured backend routes were `bedrock/converse/us.amazon.nova-pro-v1:0` for `chat-main-v1` and `bedrock/converse/us.amazon.nova-micro-v1:0` for `chat-fast-v1`.
+
+| Check | Result | Usage reported by LiteLLM |
+| --- | --- | ---: |
+| Main chat completion | PASS | 7 input, 4 output tokens |
+| Fast streaming | PASS: content and terminal `[DONE]` | Not supplied by the streaming response |
+| Main tool-call generation | PASS: `web_search` and valid arguments | 404 input, 20 output tokens |
+| Main JSON-schema output | PASS | 401 input, 19 output tokens |
+| Titan V2 embeddings | PASS: two distinct normalized 1024D vectors | 19 input tokens |
+| Cohere reranking | FAIL: Bedrock returned `INVALID_PAYMENT_INSTRUMENT` | No usage returned |
+| Fast research contract | PASS: tool call and prompted-JSON continuation using synthetic evidence | 1,246 input, 211 output tokens across two requests |
+
+The successful fast research check ran at `2026-11-16T16:04:35Z`. The tool request used 494 input and 21 output tokens; the continuation used 752 input and 190 output tokens. Model response fields were the logical alias `chat-fast-v1`; backend identity is established by the launcher and checked-in configuration, not that response field. The request used synthetic evidence only and did not execute web search. Exact billed charges were not available.
+
+The actual `researchClient` fallback path was then tested with [`verify-live-fallback.mjs`](../scripts/verify-live-fallback.mjs). A loopback shim returned a synthetic 503 for `chat-main-v1`, then forwarded the fallback's two requests to the real `chat-fast-v1` route. The test used one synthetic search result and validated the application's claim schema, citation ID, and empty comparison list. It passed at `2026-11-16T16:23:22Z`; those two Bedrock calls reported 1,436 input and 245 output tokens. The app reserved 3 model calls including the simulated main call, 1 search query, and 6,506 prompt bytes. No Tavily request was made. Reproduce with `node --import tsx scripts/verify-live-fallback.mjs` while the loopback LiteLLM gateway is running.
+
+The live probe exposed format issues: the model can emit `<thinking>`/`<response>` wrappers around JSON, and a loose example can lead it to use the wrong claim keys, enum values, or a comparison without a historical baseline. The application now removes only recognized wrappers before strict schema validation, uses a valid enum example, and includes a comparison example only when an authorized historical baseline or user quote exists. The successful fast-contract result was obtained after tightening the verifier prompt to match that shape. This compatibility check is not a multi-subject research-quality result.
+
+The current rerank denial prevents a live reranking claim; retrieval retains reciprocal-rank fusion when reranking fails, as tested locally. No AWS Marketplace or payment settings were changed. The account/profile must gain Bedrock access before reranking can be verified again.
+
 ## Reproduce
 
 Follow [the local gateway README](../infra/litellm/README.md). Start the gateway with an existing authorized AWS profile, then run:
@@ -62,9 +84,9 @@ Use named checks to avoid repeating unrelated billable calls while debugging. Re
 
 ## Not established yet
 
-- No final per-turn dollar cap or total evaluation budget has been set from these calls.
+- Live charges have not been reconciled; the successful check reports token usage but not an AWS bill.
 - No full live browser/LangGraph quality run or adversarial schema evaluation against a provider. The bounded `researchClient` tool-result continuation check is documented in [Phase 2 verification](PHASE2_VERIFICATION.md); deterministic cancellation/recovery fixtures are local tests.
-- No web-search integration; no Tavily key or user conversation was used.
+- No live Tavily search was executed; `TAVILY_API_KEY` is not configured in this environment.
 - No LangSmith export verification; real-user trace content remains disabled/redacted by policy.
 - No database/vector-index integration, retrieval recall evaluation, or long-context test.
 - No hosted capacity or provider latency load test. The separate 100-client/10-turn local synthetic measurement is in [Phase 12 local evaluation](PHASE12_LOCAL_EVALUATION.md).

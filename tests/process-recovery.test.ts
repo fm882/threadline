@@ -27,7 +27,7 @@ it('recovers an admitted run after a process dies during inference', async () =>
   const dir = await mkdtemp(join(tmpdir(), 'minmi-crash-'));
   let requests = 0;
   const gateway = createServer(async (req, res) => {
-    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }] })); return; }
+    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }, { id: 'chat-fast-v1' }] })); return; }
     for await (const _ of req) { /* consume */ } requests++;
     const current = requests;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -38,7 +38,7 @@ it('recovers an admitted run after a process dies during inference', async () =>
   const gatewayPort = await listen(gateway);
   const reserved = createServer(); const port = await listen(reserved); await new Promise<void>(resolve => reserved.close(() => resolve()));
   const base = `http://127.0.0.1:${port}`;
-  const start = () => spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1`, INFERENCE_API_KEY: 'fixture', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
+  const start = () => spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1`, INFERENCE_API_KEY: 'fixture', BEDROCK_FAST_ROUTE: 'bedrock/converse/us.amazon.nova-micro-v1:0', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
   let child = start();
   try {
     await waitUntil(async () => (await fetch(`${base}/health/ready`)).ok);
@@ -66,7 +66,7 @@ it('publishes a completed checkpoint after a hard crash even when the gateway is
   try {
     await waitUntil(async () => output.includes('CHECKPOINT_READY'));
     await stop(worker, 'SIGKILL');
-    server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: 'http://127.0.0.1:1/v1', INFERENCE_API_KEY: 'fixture', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
+    server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: 'http://127.0.0.1:1/v1', INFERENCE_API_KEY: 'fixture', BEDROCK_FAST_ROUTE: 'bedrock/converse/us.amazon.nova-micro-v1:0', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
     const base = `http://127.0.0.1:${port}`;
     // This fixture uses alice rather than the production local identity; inspect the DB after shutdown.
     await waitUntil(async () => (await fetch(`${base}/health/live`)).ok);
@@ -131,7 +131,7 @@ it('does not repeat publication after a hard crash immediately after commit', as
   try {
     await waitUntil(async () => output.includes('PUBLICATION_COMMITTED'));
     await stop(worker, 'SIGKILL');
-    server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: 'http://127.0.0.1:1/v1', INFERENCE_API_KEY: 'fixture', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
+    server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: 'http://127.0.0.1:1/v1', INFERENCE_API_KEY: 'fixture', BEDROCK_FAST_ROUTE: 'bedrock/converse/us.amazon.nova-micro-v1:0', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
     await waitUntil(async () => (await fetch(`http://127.0.0.1:${port}/health/live`)).ok);
     await new Promise(resolve => setTimeout(resolve, 1200)); await stop(server);
     const reopened = new PGlite(join(dir, 'app-db')); const recovered = new Store(reopened); await recovered.initialize();
@@ -145,7 +145,7 @@ it('does not repeat publication after a hard crash immediately after commit', as
 it('dispatches an admitted job after a hard crash before execution starts', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'minmi-admission-crash-'));
   const gateway = createServer(async (req, res) => {
-    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }] })); return; }
+    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }, { id: 'chat-fast-v1' }] })); return; }
     for await (const _ of req) { /* consume */ }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: { role: 'assistant', content: 'recovered admission' }, finish_reason: null }] })}\n\n`);
@@ -160,7 +160,7 @@ it('dispatches an admitted job after a hard crash before execution starts', asyn
     await waitUntil(async () => output.includes('\n'));
     const { conversation, runId } = JSON.parse(output.trim());
     await stop(worker, 'SIGKILL');
-    server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1`, INFERENCE_API_KEY: 'fixture', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
+    server = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1`, INFERENCE_API_KEY: 'fixture', BEDROCK_FAST_ROUTE: 'bedrock/converse/us.amazon.nova-micro-v1:0', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
     const base = `http://127.0.0.1:${port}`;
     await waitUntil(async () => (await (await fetch(`${base}/api/runs/${runId}`)).json()).status === 'completed');
     const history = await (await fetch(`${base}/api/conversations/${conversation}/messages`)).json();

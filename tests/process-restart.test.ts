@@ -29,7 +29,7 @@ async function waitReady(base: string, child: ChildProcess) {
 it('retains a completed HTTP chat after a clean server process restart', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'minmi-process-'));
   const gateway = createServer(async (req, res) => {
-    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }] })); return; }
+    if (req.url === '/v1/models') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'chat-main-v1' }, { id: 'chat-fast-v1' }] })); return; }
     for await (const _ of req) { /* consume request */ }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.write(`data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'chat-main-v1', choices: [{ index: 0, delta: { role: 'assistant', content: 'persisted answer' }, finish_reason: null }] })}\n\n`);
@@ -39,7 +39,7 @@ it('retains a completed HTTP chat after a clean server process restart', async (
   const reserved = createServer(); const port = await listen(reserved);
   await new Promise<void>(resolve => reserved.close(() => resolve()));
   const base = `http://127.0.0.1:${port}`;
-  const start = () => spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1`, INFERENCE_API_KEY: 'fixture-key', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
+  const start = () => spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], { env: { ...process.env, APP_DATA_DIR: dir, PORT: String(port), INFERENCE_BASE_URL: `http://127.0.0.1:${gatewayPort}/v1`, INFERENCE_API_KEY: 'fixture-key', BEDROCK_FAST_ROUTE: 'bedrock/converse/us.amazon.nova-micro-v1:0', TAVILY_API_KEY: '', LANGSMITH_TRACING: 'false' }, stdio: 'ignore' });
   let child = start();
   try {
     await waitReady(base, child);

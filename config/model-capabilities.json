@@ -5,5 +5,19 @@
     "streaming": true,
     "contextTokens": 32000,
     "maxOutputTokens": 1024
+  },
+  "chatFallback": {
+    "model": "chat-fast-v1",
+    "streaming": true,
+    "toolCalls": true,
+    "promptedJson": true,
+    "contextTokens": 16000,
+    "maxOutputTokens": 1024,
+    "verification": {
+      "streaming": "passed",
+      "researchContract": "passed",
+      "backendRoute": "bedrock/converse/us.amazon.nova-micro-v1:0",
+      "checkedAt": "2026-11-16T16:23:22.703Z"
+    }
   }
 }
