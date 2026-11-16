@@ -67,7 +67,7 @@ it('handles parallel subject searches within the shared two-query limit and pres
           const parsed = JSON.parse(item.content); return Array.isArray(parsed) ? parsed : [];
         });
         const id = evidence[0].id;
-        return { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Unsupported CRM detail.', kind: 'other', evidenceIds: [] }, { claim: 'Acme pricing remains uncertain.', kind: 'pricing', evidenceIds: [id] }], requestedSubjects: ['Acme', 'Beta', 'Gamma'], comparisons: ['Acme', 'Beta', 'Gamma'].map(subject => ({ subject, attribute: 'price', outcome: 'inconclusive', statement: `Current evidence is insufficient for ${subject}.`, baselineOrigin: subject === 'Acme' ? 'user_reported' : 'unsupported', evidenceIds: evidence.map((item: any) => item.id).slice(0, 1), currentDimensions: { seats: null, region: null } })), uncertainty: 'Gamma had no query budget.' }) };
+        return { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Unsupported CRM detail.', kind: 'other', evidenceIds: [] }, { claim: 'The earlier answer said Acme pricing remains uncertain.', kind: 'other', evidenceIds: [id] }, { claim: 'Acme pricing remains uncertain.', kind: 'pricing', evidenceIds: [id] }], requestedSubjects: ['Acme', 'Beta', 'Gamma'], comparisons: ['Acme', 'Beta', 'Gamma'].map(subject => ({ subject, attribute: 'price', outcome: 'inconclusive', statement: `Current evidence is insufficient for ${subject}.`, baselineOrigin: subject === 'Acme' ? 'user_reported' : 'unsupported', evidenceIds: evidence.map((item: any) => item.id).slice(0, 1), currentDimensions: { seats: null, region: null } })), uncertainty: 'Gamma had no query budget.' }) };
       })();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'tool_calls' : 'stop' }] }));
@@ -401,8 +401,8 @@ it('stops after bounded follow-ups when registered search evidence cannot fit th
     const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, verifyCurrent: true, contextTokens: 16_000,
       search: async () => [{ url: 'https://example.com/', title: 'Large source', excerpt: `Supported evidence ${'details '.repeat(400)}`, observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
     await expect(client([{ role: 'user', content: 'current information' }], () => {}, AbortSignal.timeout(5000))).rejects.toBeInstanceOf(ContextBudgetError);
-    expect(requests).toBe(3);
-    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing', 'reviewing', 'reviewing']);
+    expect(requests).toBe(2);
+    expect((await store.events('alice', runId)).filter(event => event.kind === 'progress').map(event => JSON.parse(event.data).stage)).toEqual(['searching', 'reviewing', 'reviewing']);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 
