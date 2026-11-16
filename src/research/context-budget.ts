@@ -5,17 +5,17 @@ export class ContextBudgetError extends Error {
   constructor() { super('Prompt exceeds the configured context envelope after bounded compaction.'); this.name = 'ContextBudgetError'; }
 }
 
-/** Count serialized UTF-8 bytes as input-token upper bound, plus message framing. */
-export function promptTokenUpperBound(messages: unknown[], extraPayloads: unknown[] = []) {
+/** Count serialized UTF-8 bytes as a conservative, tokenizer-independent budget cost. */
+export function serializedPromptBudgetCost(messages: unknown[], extraPayloads: unknown[] = []) {
   const serialized = JSON.stringify({ messages, extraPayloads });
   return Buffer.byteLength(serialized, 'utf8') + messages.length * 8;
 }
 
 export function assertPromptBudget(messages: unknown[], budget: ContextBudget, extraPayloads: unknown[] = []) {
-  const inputTokens = promptTokenUpperBound(messages, extraPayloads);
-  const availableTokens = budget.contextTokens - budget.outputTokens - budget.safetyTokens;
-  if (inputTokens > availableTokens) throw new ContextBudgetError();
-  return { inputTokens, availableTokens };
+  const inputCost = serializedPromptBudgetCost(messages, extraPayloads);
+  const availableCost = budget.contextTokens - budget.outputTokens - budget.safetyTokens;
+  if (inputCost > availableCost) throw new ContextBudgetError();
+  return { inputCost, availableCost };
 }
 
 /** Drop only oldest complete user/assistant pairs; preserve system instructions and the current user request. */
@@ -32,13 +32,13 @@ function compactByRoles<T>(messages: T[], roles: string[], budget: ContextBudget
   const result = [...messages], selectedRoles = [...roles];
   let currentIndex = selectedRoles.lastIndexOf('user');
   if (currentIndex < 0) throw new ContextBudgetError();
-  const availableTokens = budget.contextTokens - budget.outputTokens - budget.safetyTokens;
-  let inputTokens = promptTokenUpperBound(result, extraPayloads), removedPairs = 0;
-  for (let i = 0; inputTokens > availableTokens && i < currentIndex - 1;) {
+  const availableCost = budget.contextTokens - budget.outputTokens - budget.safetyTokens;
+  let inputCost = serializedPromptBudgetCost(result, extraPayloads), removedPairs = 0;
+  for (let i = 0; inputCost > availableCost && i < currentIndex - 1;) {
     if (selectedRoles[i] !== 'user' || selectedRoles[i + 1] !== 'assistant') { i++; continue; }
     const removedBytes = Buffer.byteLength(JSON.stringify(result[i]), 'utf8') + Buffer.byteLength(JSON.stringify(result[i + 1]), 'utf8') + 2 + 16;
     result.splice(i, 2); selectedRoles.splice(i, 2); currentIndex -= 2;
-    inputTokens -= removedBytes; removedPairs++;
+    inputCost -= removedBytes; removedPairs++;
   }
   const measured = assertPromptBudget(result, budget, extraPayloads);
   return { messages: result, removedPairs, ...measured };

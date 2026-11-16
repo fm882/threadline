@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { assertPromptBudget, compactChatMessages, compactSerializedMessages, ContextBudgetError, promptTokenUpperBound } from '../src/research/context-budget.js';
+import { assertPromptBudget, compactChatMessages, compactSerializedMessages, ContextBudgetError, serializedPromptBudgetCost } from '../src/research/context-budget.js';
 
 it('compacts only complete oldest user/assistant pairs and preserves systems and the current request', () => {
   const messages = [
@@ -11,7 +11,7 @@ it('compacts only complete oldest user/assistant pairs and preserves systems and
   const compiled = compactChatMessages(messages, { contextTokens: 6000, outputTokens: 1000, safetyTokens: 500 });
   expect(compiled.removedPairs).toBe(1);
   expect(compiled.messages.map(message => message.content)).toEqual([messages[0].content, messages[3].content]);
-  expect(compiled.inputTokens).toBeLessThanOrEqual(compiled.availableTokens);
+  expect(compiled.inputCost).toBeLessThanOrEqual(compiled.availableCost);
 });
 
 it('bounds a thousand distracting exchanges without dropping the protected subject list', () => {
@@ -22,13 +22,13 @@ it('bounds a thousand distracting exchanges without dropping the protected subje
   expect(compiled.removedPairs).toBeGreaterThan(900);
   expect(compiled.messages[0].content).toContain('Twenty CRM');
   expect(compiled.messages.at(-1)?.content).toBe('Compare all five requested CRM products.');
-  expect(compiled.inputTokens).toBeLessThanOrEqual(3928);
+  expect(compiled.inputCost).toBeLessThanOrEqual(3928);
 });
 
 it('counts schemas, tool results, message frames, and output reserve in the request envelope', () => {
   const messages = [{ role: 'system', content: 'instructions' }, { role: 'user', content: 'question' }];
-  const plain = promptTokenUpperBound(messages);
-  const withSchema = promptTokenUpperBound(messages, [{ tool: 'web_search', schema: 'x'.repeat(2000) }]);
+  const plain = serializedPromptBudgetCost(messages);
+  const withSchema = serializedPromptBudgetCost(messages, [{ tool: 'web_search', schema: 'x'.repeat(2000) }]);
   expect(withSchema).toBeGreaterThan(plain);
   expect(() => assertPromptBudget(messages, { contextTokens: 4000, outputTokens: 1024, safetyTokens: 2048 }, [{ tool: 'large', schema: 'x'.repeat(2000) }])).toThrow(ContextBudgetError);
 });

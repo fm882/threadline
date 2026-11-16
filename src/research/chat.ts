@@ -139,7 +139,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       if (current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
       const compiled = compactChatMessages(selected, { contextTokens, outputTokens: 1024, safetyTokens: 2048 }, [{ systemReserve: 'Web search availability and safety instructions', toolSchemaReserve: 512 }]);
       if (compiled.removedPairs) trace.stage('compaction');
-      trace.decision('context_budget', { removedPairs: compiled.removedPairs, inputTokens: compiled.inputTokens, availableTokens: compiled.availableTokens });
+      trace.decision('context_budget', { removedPairs: compiled.removedPairs, inputCost: compiled.inputCost, availableCost: compiled.availableCost });
       selected.splice(0, selected.length, ...compiled.messages);
       signal?.throwIfAborted();
       if (!await store.beginAttempt(owner, run)) {

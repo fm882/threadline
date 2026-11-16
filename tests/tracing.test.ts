@@ -12,7 +12,7 @@ it('exports a correlated redacted trace to the LangSmith API contract', async ()
     },
   });
   const id = '1ab22b0d-3bf2-47a7-a707-f7299ba5bbcc';
-  await sink({ id, start: 1000, end: 2000, stages: [{ name: 'admission', at: 1000 }, { name: 'inference', at: 1200 }, { name: 'compaction', at: 1250 }, { name: 'publication', at: 1900 }], decisions: [{ name: 'context_budget', values: { removedPairs: 2, inputTokens: 12000, availableTokens: 28928 } }, { name: 'history_coverage', values: { complete: false } }] });
+  await sink({ id, start: 1000, end: 2000, stages: [{ name: 'admission', at: 1000 }, { name: 'inference', at: 1200 }, { name: 'compaction', at: 1250 }, { name: 'publication', at: 1900 }], decisions: [{ name: 'context_budget', values: { removedPairs: 2, inputCost: 12000, availableCost: 28928 } }, { name: 'history_coverage', values: { complete: false } }] });
   const submission = requests.find(request => request.url.endsWith('/runs'));
   expect(submission).toBeDefined();
   const data = JSON.parse(submission!.body);
@@ -21,5 +21,5 @@ it('exports a correlated redacted trace to the LangSmith API contract', async ()
   expect(data.inputs).toEqual({ content: '[redacted]' });
   expect(data.outputs).toEqual({ content: '[redacted]' });
   expect(data.extra.metadata.stages.map((stage: { name: string }) => stage.name)).toEqual(['admission', 'inference', 'compaction', 'publication']);
-  expect(data.extra.metadata.decisions).toEqual([{ name: 'context_budget', values: { removedPairs: 2, inputTokens: 12000, availableTokens: 28928 } }, { name: 'history_coverage', values: { complete: false } }]);
+  expect(data.extra.metadata.decisions).toEqual([{ name: 'context_budget', values: { removedPairs: 2, inputCost: 12000, availableCost: 28928 } }, { name: 'history_coverage', values: { complete: false } }]);
 });
