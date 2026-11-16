@@ -6,6 +6,13 @@ export function requiresCurrentVerification(input: string): boolean {
   return explicit.test(input) || implicitCurrent.test(input) || (/\bsince\b/i.test(input) && changed.test(input));
 }
 
+/** Greetings do not need live evidence, even when fresh search is selected. */
+export function isConversationalGreeting(input: string): boolean {
+  const normalized = input.toLocaleLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+  const social = 'how (?:are|r) (?:you|u)(?: doing)?';
+  return new RegExp(`^(?:(?:h+i+|he+y+|hello+|hiya|howdy|good (?:morning|afternoon|evening))(?: ${social})?|${social})$`).test(normalized);
+}
+
 export function freshnessNotice(observedAt: string[], now: Date, maxAgeMs = 24 * 60 * 60 * 1000) {
   if (!observedAt.length) throw new Error('No observations');
   const times = observedAt.map(value => Date.parse(value));

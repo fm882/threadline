@@ -5,7 +5,7 @@ import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages
 import { RunBudgetExceeded, Store, type ComparisonClaim } from '../persistence/store.js';
 import type { HistoryRetriever } from '../history/index.js';
 import { traceTurn, type TraceSink } from '../telemetry/tracing.js';
-import { requiresCurrentVerification } from './freshness.js';
+import { isConversationalGreeting, requiresCurrentVerification } from './freshness.js';
 import { prepareExactRecall } from '../history/recall.js';
 import { historicalContextPrompt, prepareHistoricalContext } from '../history/context.js';
 import { compactChatMessages, ContextBudgetError, serializedPromptBudgetCost } from './context-budget.js';
@@ -20,7 +20,8 @@ export const MAX_INPUT_CHARS = 8_000;
 export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false, reserveModelCall?: (promptBytes: number) => Promise<unknown>): ChatClient {
   const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 2048, maxRetries: 0, timeout: 65_000 });
   return async (messages, onChunk, signal) => {
-    if (verifyCurrent || requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
+    const currentQuestion = messages[messages.length - 1]?.content || '';
+    if ((verifyCurrent && !isConversationalGreeting(currentQuestion)) || requiresCurrentVerification(currentQuestion)) {
       return 'Web search is not configured, so I cannot verify current information.';
     }
     const historicalContext = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n');
