@@ -287,8 +287,10 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
             const dimensions = comparison[key];
             if (dimensions === null) delete comparison[key];
             else if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
-              const value = (dimensions as Record<string, unknown>).seats;
-              if (value !== undefined && (!Number.isInteger(value) || Number(value) < 1)) delete (dimensions as Record<string, unknown>).seats;
+              const fields = dimensions as Record<string, unknown>;
+              for (const [field, value] of Object.entries(fields)) if (value === null) delete fields[field];
+              const seats = fields.seats;
+              if (seats !== undefined && (!Number.isInteger(seats) || Number(seats) < 1)) delete fields.seats;
             }
           }
           return comparison;
