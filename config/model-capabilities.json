@@ -11,8 +11,8 @@
     "streaming": true,
     "toolCalls": true,
     "promptedJson": true,
-    "contextTokens": 16000,
-    "maxOutputTokens": 1024,
+    "contextTokens": 32000,
+    "maxOutputTokens": 4096,
     "verification": {
       "streaming": "passed",
       "researchContract": "passed",

@@ -60,10 +60,10 @@ it('requires an attested fallback route to be advertised before readiness', asyn
   const path = join(dir, 'manifest.json');
   await writeFile(path, JSON.stringify({
     version: 'fixture-v1',
-    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 32_000, maxOutputTokens: 8192 },
+    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 64_000, maxOutputTokens: 8192 },
     chatFallback: {
       model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true,
-      contextTokens: 16_000, maxOutputTokens: 1024,
+      contextTokens: 32_000, maxOutputTokens: 4096,
       verification: { streaming: 'passed', researchContract: 'passed', backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
     },
   }));

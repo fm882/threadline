@@ -7,7 +7,7 @@ const mainSchema = z.object({
 }).strict();
 const fallbackSchema = z.object({
   model: z.string().min(1), streaming: z.literal(true), toolCalls: z.literal(true), promptedJson: z.literal(true),
-  contextTokens: z.number().int().min(4096), maxOutputTokens: z.literal(1024),
+  contextTokens: z.number().int().min(4096), maxOutputTokens: z.literal(4096),
   verification: z.object({ streaming: z.literal('passed'), researchContract: z.literal('passed'), backendRoute: z.string().min(1), checkedAt: z.string().datetime() }).strict(),
 }).strict();
 const manifestSchema = z.object({

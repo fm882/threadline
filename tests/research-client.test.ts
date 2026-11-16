@@ -455,11 +455,11 @@ it('recompiles the full research prompt against the smaller verified fallback af
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
     const fallback = {
       model: 'chat-fast-v1', streaming: true as const, toolCalls: true as const, promptedJson: true as const,
-      contextTokens: 16_000, maxOutputTokens: 1024 as const,
+      contextTokens: 32_000, maxOutputTokens: 4096 as const,
       verification: { streaming: 'passed' as const, researchContract: 'passed' as const, backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
     };
     const client = researchClient({
-      baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 32_000,
+      baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 64_000,
       fallback, searchKey: '', store, owner: 'alice', runId,
       now: () => new Date('2026-11-16T00:00:00.000Z'),
       search: async () => [{ url: 'https://example.com/northstar', title: 'Northstar pricing', excerpt: 'Starter costs $19 per seat monthly.', observedAt: '2026-11-16T00:00:00.000Z', provider: 'tavily', representation: 'search_snippet' }],
@@ -496,7 +496,7 @@ it('does not fall back after a main-route capability or request rejection', asyn
     const client = researchClient({
       baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 32_000,
       fallback: {
-        model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true, contextTokens: 16_000, maxOutputTokens: 1024,
+        model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true, contextTokens: 32_000, maxOutputTokens: 4096,
         verification: { streaming: 'passed', researchContract: 'passed', backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
       },
       searchKey: '', store, owner: 'alice', runId,
@@ -523,7 +523,7 @@ it('does not invoke a fallback when the preserved current request exceeds its sm
     const client = researchClient({
       baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', contextTokens: 32_000,
       fallback: {
-        model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true, contextTokens: 4096, maxOutputTokens: 1024,
+        model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true, contextTokens: 4096, maxOutputTokens: 4096,
         verification: { streaming: 'passed', researchContract: 'passed', backendRoute: 'bedrock/converse/us.amazon.nova-micro-v1:0', checkedAt: '2026-11-16T00:00:00.000Z' },
       },
       searchKey: '', store, owner: 'alice', runId,
