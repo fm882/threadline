@@ -69,21 +69,23 @@ In a second terminal:
 node scripts/verify-inference.mjs
 ```
 
-The complete pass sends six logical requests, with embeddings containing two short input strings (the gateway may perform more than one provider invocation). Chat outputs are capped at 64 or 128 tokens. Client and gateway retries are disabled for this check. Only synthetic text is used; no web search is executed and no user conversation is sent.
+The complete pass sends eight logical requests, with embeddings containing two short input strings (the gateway may perform more than one provider invocation). Chat outputs are capped at 64, 128, or 256 tokens. Client and gateway retries are disabled for this check. Only synthetic text is used; no web search is executed and no user conversation is sent. The `fast-research-contract` check sends two requests to the fast alias: it exercises the application's search-tool shape, then validates a prompted-JSON continuation against one synthetic evidence record. Run it only after allocating a spend cap.
 
 Checks:
 
 1. Main-model text completion.
 2. Fast-model SSE completion and terminal event.
-3. A generated `web_search` function call with valid JSON arguments; the tool is not executed.
-4. A basic strict JSON-schema output request producing the expected object.
-5. Two embeddings with correct order, finite values, 1024 dimensions, unit norm, and different vectors.
-6. Reranking two documents with the relevant document first.
+3. Fast-model `web_search` call followed by a prompted-JSON continuation using synthetic evidence; no real search is executed.
+4. A generated `web_search` function call with valid JSON arguments on the main model; the tool is not executed.
+5. A basic strict JSON-schema output request producing the expected object.
+6. Two embeddings with correct order, finite values, 1024 dimensions, unit norm, and different vectors.
+7. Reranking two documents with the relevant document first.
 
 Run individual checks when diagnosing a failure, avoiding repeated unnecessary calls:
 
 ```bash
 node scripts/verify-inference.mjs main-chat fast-stream
+node scripts/verify-inference.mjs fast-research-contract
 node scripts/verify-inference.mjs embeddings rerank
 ```
 

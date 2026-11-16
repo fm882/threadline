@@ -33,6 +33,8 @@ Credentials and machine-specific AWS profile names are intentionally omitted. Th
 
 These durations are individual diagnostic samples, **not** latency percentiles, service-level guarantees or throughput measurements. The embeddings had norms approximately `1.000000025` and `1.000000040`. No full vectors are included in the shared report.
 
+The verifier now has an additional `fast-research-contract` check, not included in the results above. It makes two bounded calls to the fast alias: a forced call using the application's search-tool schema, then a synthetic evidence continuation that validates the prompted JSON shape used by the app without native `response_format`. This exact fast-route research contract remains unverified until that named check is run; do not enable the route as a fallback based on the generic model documentation alone.
+
 The text/stream/tool/schema calls used output limits of 64 or 128 tokens. The `web_search` tool was not executed. A valid small JSON response does not prove strict schema behavior on all inputs; schema validation remains mandatory in the application. Gateway response model fields returned logical aliases, so backend identities above come from the actual launcher/configuration used, not independent response-model attestation.
 
 Embedding/reranking checks ran at approximately 13:46 UTC; Nova chat checks ran at approximately 13:48 UTC. Sanitized raw reports remain in ignored `.data/` files. No credentials, account IDs, private conversation text or full vectors are committed.

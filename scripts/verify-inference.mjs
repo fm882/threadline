@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { root, localKey } from './local-env.mjs';
 
 // Real, billable smoke tests. No web search or user/private text is sent.
-// No retries: failures remain visible and invocation count stays bounded.
+// fast-research-contract makes two model calls; there are no retries.
 const base = (process.env.INFERENCE_BASE_URL || 'http://127.0.0.1:4000/v1').replace(/\/$/, '');
 const rerankUrl = process.env.RERANK_URL || new URL('/rerank', base).href;
 const loopbackHosts = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -18,7 +19,7 @@ const fast = process.env.CHAT_FAST_MODEL || 'chat-fast-v1';
 const embedding = process.env.EMBEDDING_MODEL || 'history-embedding-v1';
 const dimensions = Number(process.env.EMBEDDING_DIMENSIONS || 1024);
 const rerank = process.env.RERANK_MODEL || 'history-rerank-v1';
-const allowed = ['main-chat', 'fast-stream', 'tool-call', 'structured-output', 'embeddings', 'rerank'];
+const allowed = ['main-chat', 'fast-stream', 'fast-research-contract', 'tool-call', 'structured-output', 'embeddings', 'rerank'];
 const selected = process.argv.slice(2);
 if (selected.some((name) => !allowed.includes(name))) {
   throw new Error(`Unknown test. Choose from: ${allowed.join(', ')}`);
@@ -62,6 +63,22 @@ const tools = [{ type: 'function', function: {
     type: 'object', properties: { q: { type: 'string' } }, required: ['q'], additionalProperties: false,
   },
 } }];
+const researchTools = [{ type: 'function', function: {
+  name: 'web_search',
+  description: 'Search the public web for current information when needed. For a multi-subject request, include each subject so each receives a finding or explicit gap.',
+  parameters: {
+    type: 'object', properties: {
+      query: { type: 'string', minLength: 1, maxLength: 500 },
+      subjects: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 200 }, maxItems: 10 },
+    }, required: ['query'], additionalProperties: false,
+  },
+} }];
+const fastResearchSchema = z.object({
+  claims: z.array(z.object({ claim: z.string().trim().min(1).max(4000), kind: z.enum(['pricing', 'other']), evidenceIds: z.array(z.string().uuid()).min(1).max(5) }).strict()).min(1).max(10),
+  requestedSubjects: z.array(z.string().trim().min(1).max(200)).max(10).default([]),
+  comparisons: z.array(z.never()).max(10).default([]),
+  uncertainty: z.string().max(2000),
+}).strict();
 
 const checks = {
   'main-chat': async () => {
@@ -98,6 +115,42 @@ const checks = {
     assert.match(content, /streaming works/i);
     assert.ok(done, 'SSE stream must terminate with [DONE]');
     return { events: count, done };
+  },
+  'fast-research-contract': async () => {
+    const toolResult = await request('/chat/completions', {
+      model: fast, max_tokens: 128, tools: researchTools,
+      tool_choice: { type: 'function', function: { name: 'web_search' } },
+      messages: [
+        { role: 'system', content: 'Call web_search for every current question. Include each requested subject.' },
+        { role: 'user', content: 'Check the current pricing for Northstar CRM.' },
+      ],
+    });
+    const call = toolResult.choices?.[0]?.message?.tool_calls?.[0];
+    assert.equal(call?.function?.name, 'web_search');
+    const args = JSON.parse(call.function.arguments);
+    assert.match(args.query, /Northstar/i);
+    assert.ok(args.subjects?.some(subject => /Northstar CRM/i.test(subject)));
+    const evidenceId = 'd4b5d80e-22df-4f2b-8b5d-43ed9f8bf152';
+    const continuation = await request('/chat/completions', {
+      model: fast, max_tokens: 256, tools: researchTools,
+      messages: [
+        { role: 'system', content: 'Return only JSON with claims, requestedSubjects, and uncertainty. Each claim must use evidenceIds from the search result and kind pricing or other. Do not use response_format.' },
+        { role: 'user', content: 'Check the current pricing for Northstar CRM.' },
+        { role: 'assistant', content: null, tool_calls: [call] },
+        { role: 'tool', tool_call_id: call.id, content: JSON.stringify([{ id: evidenceId, title: 'Northstar CRM pricing', excerpt: 'The fictional Northstar CRM Starter plan costs $19 per seat each month.', url: 'https://example.com/northstar-pricing', observedAt: '2026-11-16T00:00:00.000Z' }]) },
+      ],
+    });
+    const content = continuation.choices?.[0]?.message?.content || '';
+    const answer = fastResearchSchema.parse(JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, '')));
+    assert.ok(answer.claims.some(claim => claim.evidenceIds.includes(evidenceId)));
+    return {
+      responseModels: [toolResult.model, continuation.model],
+      usage: {
+        toolCall: toolResult.usage || null,
+        promptedJson: continuation.usage || null,
+      },
+      citedSyntheticEvidence: true,
+    };
   },
   'tool-call': async () => {
     const result = await request('/chat/completions', {
