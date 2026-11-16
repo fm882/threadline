@@ -277,7 +277,8 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
           }
           for (const key of ['priorDimensions', 'currentDimensions']) {
             const dimensions = comparison[key];
-            if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
+            if (dimensions === null) delete comparison[key];
+            else if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
               const value = (dimensions as Record<string, unknown>).seats;
               if (value !== undefined && (!Number.isInteger(value) || Number(value) < 1)) delete (dimensions as Record<string, unknown>).seats;
             }
