@@ -1,7 +1,7 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import { z } from 'zod';
-import type { Store } from '../persistence/store.js';
+import { RunBudgetExceeded, type Store } from '../persistence/store.js';
 import { tavilySearch, SearchUnavailable } from '../search/tavily.js';
 import type { ChatMessage } from './chat.js';
 import type { ResearchFallbackCapability } from '../inference/capabilities.js';
@@ -124,7 +124,7 @@ export function qualifyComparison(comparison: ResearchComparison, cited: { title
 }
 
 export function researchClient(config: { baseURL: string; apiKey: string; model: string; searchKey: string; store: Store; owner: string; runId: string; search?: ReturnType<typeof tavilySearch>; now?: () => Date; verifyCurrent?: boolean; contextTokens?: number; fallback?: ResearchFallbackCapability }) {
-  const mainProfile: ModelProfile = { model: config.model, contextTokens: config.contextTokens || 32_000, maxOutputTokens: 1024 };
+  const mainProfile: ModelProfile = { model: config.model, contextTokens: config.contextTokens || 32_000, maxOutputTokens: 2048 };
   const fallbackProfile: ModelProfile | undefined = config.fallback;
   const models = new Map<string, ChatOpenAI>();
   const modelFor = (profile: ModelProfile) => {
@@ -174,46 +174,56 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       return first.content;
     }
     if (calls.length > 10 || calls.some(call => call.name !== 'web_search' || !call.id)) throw new Error('Unsupported tool call');
-    const plans = calls.map(call => ({ call, ...querySchema.parse(call.args) }));
-    plannedSubjects = [...new Map(plans.flatMap(plan => plan.subjects).map(subject => [subject.trim().toLocaleLowerCase(), subject])).values()];
-    if (plannedSubjects.length) await config.store.setRequestedSubjects(config.owner, config.runId, plannedSubjects);
+    type SearchPlan = { call: typeof calls[number]; query: string; subjects: string[] };
+    const parseCalls = (toolCalls: typeof calls): SearchPlan[] => {
+      if (toolCalls.length > 10 || toolCalls.some(call => call.name !== 'web_search' || !call.id)) throw new Error('Unsupported tool call');
+      return toolCalls.map(call => ({ call, ...querySchema.parse(call.args) }));
+    };
     const resultsByQuery = new Map<string, string>();
     const observationsByQuery = new Map<string, Awaited<ReturnType<Store['registerEvidence']>>>();
-    const distinctQueries = [...new Set(plans.map(plan => plan.query))];
-    let performed = 0;
-    for (const query of distinctQueries) {
-      signal.throwIfAborted();
-      if (performed >= 2) {
-        resultsByQuery.set(query, JSON.stringify({ unavailable: 'The shared run search-query budget is exhausted; treat subjects assigned only to this query as unverified gaps.' }));
-        continue;
+    const subjectMap = new Map<string, string>();
+    const searchedQueries = new Set<string>();
+    const executePlans = async (plans: SearchPlan[]) => {
+      for (const subject of plans.flatMap(plan => plan.subjects)) subjectMap.set(subject.trim().toLocaleLowerCase(), subject);
+      plannedSubjects = [...subjectMap.values()];
+      if (plannedSubjects.length) await config.store.setRequestedSubjects(config.owner, config.runId, plannedSubjects);
+      for (const query of new Set(plans.map(plan => plan.query))) {
+        if (resultsByQuery.has(query)) continue;
+        signal.throwIfAborted();
+        if (searchedQueries.size >= 2) {
+          resultsByQuery.set(query, JSON.stringify({ unavailable: 'The shared run search-query budget is exhausted; treat subjects assigned only to this query as unverified gaps.' }));
+          continue;
+        }
+        searchedQueries.add(query);
+        await config.store.reserveResearchWork(config.owner, config.runId, { searchQueries: 1 });
+        if (!await config.store.recordProgress(config.owner, config.runId, 'searching')) throw new Error('Run is no longer active');
+        const searchId = await config.store.startSearch(config.owner, config.runId, query);
+        try {
+          const found = await search(query, signal);
+          await config.store.finishSearch(config.owner, config.runId, searchId, 'completed');
+          const queryObservations = await config.store.registerEvidence(config.owner, config.runId, found, searchId);
+          observationsByQuery.set(query, queryObservations);
+          resultsByQuery.set(query, JSON.stringify(queryObservations.map(({ id, title, excerpt, url, observedAt }) => ({ id, title, excerpt: excerpt.slice(0, 600), url, observedAt }))));
+        } catch (error) {
+          await config.store.finishSearch(config.owner, config.runId, searchId, 'failed');
+          if (!(error instanceof SearchUnavailable)) throw error;
+          resultsByQuery.set(query, JSON.stringify({ unavailable: 'Web search failed for this query; treat its subjects as unverified gaps.' }));
+        }
       }
-      await config.store.reserveResearchWork(config.owner, config.runId, { searchQueries: 1 });
-      if (!await config.store.recordProgress(config.owner, config.runId, 'searching')) throw new Error('Run is no longer active');
-      const searchId = await config.store.startSearch(config.owner, config.runId, query);
-      try {
-        const found = await search(query, signal);
-        await config.store.finishSearch(config.owner, config.runId, searchId, 'completed');
-        const queryObservations = await config.store.registerEvidence(config.owner, config.runId, found, searchId);
-        observationsByQuery.set(query, queryObservations);
-        resultsByQuery.set(query, JSON.stringify(queryObservations.map(({ id, title, excerpt, url, observedAt }) => ({ id, title, excerpt: excerpt.slice(0, 600), url, observedAt }))));
-      } catch (error) {
-        await config.store.finishSearch(config.owner, config.runId, searchId, 'failed');
-        if (!(error instanceof SearchUnavailable)) throw error;
-        resultsByQuery.set(query, JSON.stringify({ unavailable: 'Web search failed for this query; treat its subjects as unverified gaps.' }));
-      }
-      performed++;
-    }
-    signal.throwIfAborted();
-    const observations = [...observationsByQuery.values()].flat();
+      const suppliedQueries = new Set<string>();
+      const toolResults = plans.map(plan => {
+        if (suppliedQueries.has(plan.query)) return new ToolMessage({ tool_call_id: plan.call.id!, content: 'The result for this exact query is included in another tool response.' });
+        suppliedQueries.add(plan.query);
+        return new ToolMessage({ tool_call_id: plan.call.id!, content: resultsByQuery.get(plan.query) || JSON.stringify({ unavailable: 'No search result was available; treat this query as an unverified gap.' }) });
+      });
+      if (Buffer.byteLength(toolResults.map(message => String(message.content)).join('\n')) > 12000) throw new ContextBudgetError();
+      return toolResults;
+    };
+    const plans = parseCalls(calls);
+    const toolResults = await executePlans(plans);
+    let observations = [...observationsByQuery.values()].flat();
     if (!observations.length) return { content: 'Web search did not return usable sources, so I cannot verify current information. Please try again later.', claims: [] };
     if (!await config.store.recordProgress(config.owner, config.runId, 'reviewing')) throw new Error('Run is no longer active');
-    const suppliedQueries = new Set<string>();
-    const toolResults = plans.map(plan => {
-      if (suppliedQueries.has(plan.query)) return new ToolMessage({ tool_call_id: plan.call.id!, content: 'The result for this exact query is included in another tool response.' });
-      suppliedQueries.add(plan.query);
-      return new ToolMessage({ tool_call_id: plan.call.id!, content: resultsByQuery.get(plan.query) || JSON.stringify({ unavailable: 'No search result was available; treat this query as an unverified gap.' }) });
-    });
-    if (Buffer.byteLength(toolResults.map(message => String(message.content)).join('\n')) > 12000) throw new ContextBudgetError();
     signal.throwIfAborted();
     const comparisonInstructions = hasHistoricalContext || userReportedQuote ? ' This turn includes either authorized historical context or a user-supplied quote. Return exactly one comparison entry for every subject the user asks about, even when evidence is missing; use explicit gap outcomes instead of omitting subjects. For a quote supplied in the current user turn, set baselineOrigin to user_reported, include its exact text in userQuote and do not describe it as independently verified. For a missing stored baseline, set baselineOrigin to reconstructed only if a source discovered today explicitly identifies the earlier period; cite that source in historicalEvidenceIds, state its date/period, and label it as reconstructed now. Current-only undated pages cannot reconstruct an earlier baseline. Cite stored observations using their historical source IDs from the authorized context. Set baselineOrigin to stored_evidence, mixed, or unsupported when appropriate. Explain why significant updates matter to needs stated in the original message. Use supported_change only when dated historical and current evidence support the same subject and comparable dimensions; use prior_error only when evidence shows the earlier statement was incorrect for the same period, not because today differs; use no_relevant_update_found only for the checked sources and compatible scope; otherwise use inconclusive. For price, provide priorDimensions and currentDimensions for plan, currency, billingPeriod, seats, region, and taxBasis when available. Never infer missing dimensions or historical effective dates. Distinguish what was said, what sources supported then, and what current evidence supports now.' : ' Set comparisons to an empty array.';
     const comparisonExample = hasHistoricalContext || userReportedQuote
@@ -225,10 +235,26 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     if (systemIndex < 0) continuationMessages.unshift(new SystemMessage(outputInstructions));
     else continuationMessages[systemIndex] = new SystemMessage(`${continuationMessages[systemIndex].content}\n\n${outputInstructions}`);
     continuationMessages.push(first, ...toolResults);
-    const continuationRoles = continuationMessages.map(message => message instanceof HumanMessage ? 'user' : message instanceof AIMessage ? 'assistant' : 'system');
-    const continuation = (await invoke(continuationMessages, continuationRoles)).response;
+    let continuationRoles = continuationMessages.map(message => message instanceof HumanMessage ? 'user' : message instanceof AIMessage ? 'assistant' : 'system');
+    let continuation = (await invoke(continuationMessages, continuationRoles)).response;
+    let followupRounds = 0;
     signal.throwIfAborted();
-    if (continuation.tool_calls?.length || continuation.invalid_tool_calls?.length || typeof continuation.content !== 'string' || continuation.content.length > 16000) throw new Error('Invalid research response');
+    while (continuation.tool_calls?.length) {
+      if (followupRounds >= 2) throw new RunBudgetExceeded('Research used its bounded follow-up rounds before the model returned a final answer');
+      if (continuation.invalid_tool_calls?.length) throw new Error('Invalid tool call');
+      const additionalPlans = parseCalls(continuation.tool_calls);
+      const additionalResults = await executePlans(additionalPlans);
+      observations = [...observationsByQuery.values()].flat();
+      if (!observations.length) return { content: 'Web search did not return usable sources, so I cannot verify current information. Please try again later.', claims: [] };
+      if (!await config.store.recordProgress(config.owner, config.runId, 'reviewing')) throw new Error('Run is no longer active');
+      continuationMessages.push(continuation, ...additionalResults);
+      continuationRoles = continuationMessages.map(message => message instanceof HumanMessage ? 'user' : message instanceof AIMessage ? 'assistant' : 'system');
+      continuation = (await invoke(continuationMessages, continuationRoles)).response;
+      followupRounds++;
+      signal.throwIfAborted();
+    }
+    if (continuation.invalid_tool_calls?.length || typeof continuation.content !== 'string' || continuation.content.length > 16000) throw new Error('Invalid research response');
+    observations = [...observationsByQuery.values()].flat();
     const answer = researchSchema.parse(parsePromptedJson(continuation.content));
     if ((hasHistoricalContext && isHistoricalComparisonRequest(currentQuestion)) || userReportedQuote) {
       const requested = [...new Map([...plannedSubjects, ...answer.requestedSubjects].map(subject => [subject.trim().toLocaleLowerCase(), subject])).values()];

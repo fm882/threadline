@@ -25,7 +25,7 @@ export function gatewayConfig(env: NodeJS.ProcessEnv, keyPath = '.data/litellm.k
   return {
     base: base.replace(/\/$/, ''), key, model,
     contextTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.contextTokens : 32_000,
-    maxOutputTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.maxOutputTokens : 1024,
+    maxOutputTokens: 'manifest' in capabilities && capabilities.manifest ? capabilities.manifest.chatMain.maxOutputTokens : 2048,
     fallback: 'fallback' in capabilities ? capabilities.fallback : undefined,
     error,
   };

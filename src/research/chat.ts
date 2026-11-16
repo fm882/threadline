@@ -18,7 +18,7 @@ export type ChatClient = (messages: ChatMessage[], onChunk: (chunk: string) => v
 export const MAX_INPUT_CHARS = 8_000;
 
 export function gatewayClient(baseURL: string, apiKey: string, model: string, verifyCurrent = false, reserveModelCall?: (promptBytes: number) => Promise<unknown>): ChatClient {
-  const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 1024, maxRetries: 0, timeout: 65_000 });
+  const client = new ChatOpenAI({ model, apiKey, configuration: { baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: 2048, maxRetries: 0, timeout: 65_000 });
   return async (messages, onChunk, signal) => {
     if (verifyCurrent || requiresCurrentVerification(messages[messages.length - 1]?.content || '')) {
       return 'Web search is not configured, so I cannot verify current information.';
@@ -99,7 +99,7 @@ export async function checkpointAnswer(checkpointer: SqliteSaver, runId: string)
 
 const State = Annotation.Root({ messages: Annotation<ChatMessage[]>(), answer: Annotation<ChatOutput>() });
 
-export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000, retrieve?: HistoryRetriever, contextTokens = 32_000) {
+export function createChatRunner(store: Store, checkpointer: SqliteSaver, client: ChatClient, onChunk: (run: string, chunk: string) => void = () => {}, sink?: TraceSink, deadlineMs = 60_000, retrieve?: HistoryRetriever, contextTokens = 32_000, outputTokens = 1024) {
   return async (owner: string, run: string, signal?: AbortSignal) => {
     const record = await store.getRun(owner, run);
     if (record.status !== 'active') return;
@@ -175,7 +175,7 @@ export function createChatRunner(store: Store, checkpointer: SqliteSaver, client
       }
       selected.push({ role: 'user', content: current.content });
       if (current.content.length > MAX_INPUT_CHARS) throw new Error('Input exceeds context limit');
-      const compiled = compactChatMessages(selected, { contextTokens, outputTokens: 1024, safetyTokens: 2048 }, [{ systemReserve: 'Web search availability and safety instructions', toolSchemaReserve: 512 }]);
+      const compiled = compactChatMessages(selected, { contextTokens, outputTokens, safetyTokens: 2048 }, [{ systemReserve: 'Web search availability and safety instructions', toolSchemaReserve: 512 }]);
       if (compiled.removedPairs) trace.stage('compaction');
       trace.decision('context_budget', { removedPairs: compiled.removedPairs, inputCost: compiled.inputCost, availableCost: compiled.availableCost });
       selected.splice(0, selected.length, ...compiled.messages);

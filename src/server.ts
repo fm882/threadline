@@ -75,7 +75,7 @@ const runner = async (owner: string, run: string, signal: AbortSignal) => {
     },
   }) : gatewayClient(current.base, current.key || 'unconfigured', current.model, record.verify_current,
     promptBytes => store.reserveResearchWork(owner, run, { modelCalls: 1, promptBytes }));
-  await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing, 60_000, historicalRetriever, current.contextTokens)(owner, run, signal);
+  await createChatRunner(store, saver, client, (id, chunk) => chunks.emit(id, chunk), tracing, 60_000, historicalRetriever, current.contextTokens, current.maxOutputTokens)(owner, run, signal);
 };
 const ready = () => gatewayReadiness(config())();
 const dispatcher = createDispatcher(store, runner);

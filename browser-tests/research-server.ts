@@ -82,7 +82,7 @@ const run = async (owner: string, runId: string) => {
     if (historyContext && /customer relationship/i.test(userMessage)) { signal.throwIfAborted(); const answer = 'We previously compared Acme CRM and Northstar CRM for the nonprofit.'; onChunk(answer); return answer; }
     return client(messages, onChunk, signal);
   };
-  await createChatRunner(store, saver, scriptedClient, (id, chunk) => chunks.emit(id, chunk), undefined, 60_000, historyRetriever, liveConfig?.contextTokens)(owner, runId);
+  await createChatRunner(store, saver, scriptedClient, (id, chunk) => chunks.emit(id, chunk), undefined, 60_000, historyRetriever, liveConfig?.contextTokens, liveConfig?.maxOutputTokens)(owner, runId);
   if (liveAssignments) {
     const result = await store.getRun(owner, runId);
     const budget = await store.researchBudget(owner, runId);

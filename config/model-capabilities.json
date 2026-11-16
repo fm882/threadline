@@ -1,10 +1,10 @@
 {
-  "version": "local-nova-v1",
+  "version": "local-tokenharbor-v1",
   "chatMain": {
     "model": "chat-main-v1",
     "streaming": true,
     "contextTokens": 32000,
-    "maxOutputTokens": 1024
+    "maxOutputTokens": 2048
   },
   "chatFallback": {
     "model": "chat-fast-v1",

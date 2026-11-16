@@ -16,7 +16,7 @@ it('permits only an attested, separate, smaller-context research fallback', asyn
   const backendRoute = 'bedrock/converse/us.amazon.nova-micro-v1:0';
   const manifest = {
     version: 'fixture-v1',
-    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 32_000, maxOutputTokens: 1024 },
+    chatMain: { model: 'chat-main-v1', streaming: true, contextTokens: 32_000, maxOutputTokens: 2048 },
     chatFallback: {
       model: 'chat-fast-v1', streaming: true, toolCalls: true, promptedJson: true,
       contextTokens: 16_000, maxOutputTokens: 1024,
