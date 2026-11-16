@@ -1,6 +1,6 @@
 # Time-aware research agent
 
-This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Local browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. The permitted Phase 10 model fallback and paid Phase 12 quality/cost gates remain open; see the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
+This repository is an in-progress implementation of [the PRD](PRD.md) and [the phased plan](plans/time-aware-research-agent.md). Local browser chat, source-backed research, historical comparison, hybrid recall, and explicit continuation are implemented. The Phase 10 fallback mechanism is implemented but stays disabled until its exact fast route passes live verification; paid Phase 12 quality/cost gates also remain open. See the plan and [Phase 11 report](docs/PHASE11_CONTINUATION.md).
 
 ## Local development
 

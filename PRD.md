@@ -1,6 +1,6 @@
 # Time-Aware Research Agent — Product Requirements
 
-Status: implementation in progress against [the phased plan](plans/time-aware-research-agent.md). The local application and most planned acceptance criteria are implemented; the permitted Phase 10 smaller-context fallback and bounded live-provider quality/cost evaluation remain open. The plan is the source of truth for phase evidence and unchecked criteria. This PRD is local only; it has not been published as an issue or deployed. This document alone does not authorize implementation.
+Status: implementation in progress against [the phased plan](plans/time-aware-research-agent.md). The local application and most planned acceptance criteria are implemented; the Phase 10 fallback mechanism is complete but awaits exact-route verification before it can be enabled, and bounded live-provider quality/cost evaluation remains open. The plan is the source of truth for phase evidence and unchecked criteria. This PRD is local only; it has not been published as an issue or deployed. This document alone does not authorize implementation.
 
 ## Problem Statement
 
