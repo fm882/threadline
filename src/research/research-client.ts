@@ -156,6 +156,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     };
     let plannedSubjects: string[] = [];
     const hasHistoricalContext = messages.some(message => message.role === 'system' && message.content.startsWith('Authorized historical context'));
+    const historicalContext = messages.find(message => message.role === 'system' && message.content.startsWith('Authorized historical context'))?.content || '';
     const currentQuestion = messages[messages.length - 1]?.content || '';
     const userReportedQuote = includesUserReportedQuote(currentQuestion);
     const asksComparison = isHistoricalComparisonRequest(currentQuestion) || userReportedQuote;
@@ -183,6 +184,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     const observationsByQuery = new Map<string, Awaited<ReturnType<Store['registerEvidence']>>>();
     const subjectMap = new Map<string, string>();
     const searchedQueries = new Set<string>();
+    let requiredSubjects: string[] = [];
     const executePlans = async (plans: SearchPlan[]) => {
       for (const subject of plans.flatMap(plan => plan.subjects)) subjectMap.set(subject.trim().toLocaleLowerCase(), subject);
       plannedSubjects = [...subjectMap.values()];
@@ -220,6 +222,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       return toolResults;
     };
     const plans = parseCalls(calls);
+    requiredSubjects = [...new Set(plans.flatMap(plan => plan.subjects))];
     const toolResults = await executePlans(plans);
     let observations = [...observationsByQuery.values()].flat();
     if (!observations.length) return { content: 'Web search did not return usable sources, so I cannot verify current information. Please try again later.', claims: [] };
@@ -243,6 +246,8 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       if (followupRounds >= 2) throw new RunBudgetExceeded('Research used its bounded follow-up rounds before the model returned a final answer');
       if (continuation.invalid_tool_calls?.length) throw new Error('Invalid tool call');
       const additionalPlans = parseCalls(continuation.tool_calls);
+      const authorizedSubjectText = `${currentQuestion}\n${historicalContext}`.toLocaleLowerCase();
+      requiredSubjects = [...new Set([...requiredSubjects, ...additionalPlans.flatMap(plan => plan.subjects).filter(subject => authorizedSubjectText.includes(subject.trim().toLocaleLowerCase()))])];
       const additionalResults = await executePlans(additionalPlans);
       observations = [...observationsByQuery.values()].flat();
       if (!observations.length) return { content: 'Web search did not return usable sources, so I cannot verify current information. Please try again later.', claims: [] };
@@ -262,9 +267,9 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
         record.comparisons = record.comparisons.map(value => {
           if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
           const comparison = value as Record<string, unknown>;
-          if (typeof comparison.subject === 'string' && plannedSubjects.length) {
+          if (typeof comparison.subject === 'string' && requiredSubjects.length) {
             const alias = comparison.subject.trim().toLocaleLowerCase();
-            const matches = plannedSubjects.filter(subject => {
+            const matches = requiredSubjects.filter(subject => {
               const canonical = subject.trim().toLocaleLowerCase();
               return canonical === alias || canonical.startsWith(`${alias} `) || canonical.includes(` ${alias} `);
             });
@@ -285,7 +290,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     answer.claims = answer.claims.filter(claim => claim.evidenceIds.length > 0);
     if (!answer.claims.length && !answer.comparisons.length) throw new Error('Research response contained no evidence-backed claims or qualified comparisons');
     if ((hasHistoricalContext && isHistoricalComparisonRequest(currentQuestion)) || userReportedQuote) {
-      const requested = plannedSubjects.length ? plannedSubjects : answer.requestedSubjects;
+      const requested = requiredSubjects.length ? requiredSubjects : answer.requestedSubjects;
       validateSubjectCoverage(requested, answer.comparisons);
     }
     if ([...answer.claims.map(claim => claim.claim), ...answer.comparisons.map(comparison => comparison.statement), answer.uncertainty].some(text => /\[source:/i.test(text))) throw new Error('Citation markup must be generated from validated evidence');
@@ -295,7 +300,6 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     if (!hasHistoricalContext && !userReportedQuote && answer.comparisons.length) throw new Error('Comparison requires an authorized historical reference or user-supplied quote');
     const freshness = freshnessNotice(observations.map(item => item.observedAt), (config.now || (() => new Date()))());
     const byId = new Map(observations.map(item => [item.id as string, item]));
-    const historicalContext = messages.find(message => message.role === 'system' && message.content.startsWith('Authorized historical context'))?.content || '';
     const historicalSupport = /Sources attached to that answer at the time \([1-9]\d* observations\):/.test(historicalContext);
     const historicalIds = new Set([...historicalContext.matchAll(/\[historical source:([0-9a-f-]{36})\]/gi)].map(match => match[1]));
     const comparisons = answer.comparisons.map(comparison => {
