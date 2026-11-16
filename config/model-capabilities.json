@@ -3,7 +3,7 @@
   "chatMain": {
     "model": "chat-main-v1",
     "streaming": true,
-    "contextTokens": 32000,
+    "contextTokens": 64000,
     "maxOutputTokens": 4096
   },
   "chatFallback": {
