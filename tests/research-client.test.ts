@@ -2,9 +2,13 @@ import { it, expect } from 'vitest';
 import { createServer } from 'node:http';
 import { PGlite } from '@electric-sql/pglite';
 import { Store } from '../src/persistence/store.js';
-import { researchClient } from '../src/research/research-client.js';
+import { parsePromptedJson, researchClient } from '../src/research/research-client.js';
 import { SearchUnavailable } from '../src/search/tavily.js';
 import { ContextBudgetError } from '../src/research/context-budget.js';
+
+it('parses JSON after discarding model reasoning and response wrappers', () => {
+  expect(parsePromptedJson('<thinking>internal note</thinking><response>```json\n{"ok":true}\n```</response>')).toEqual({ ok: true });
+});
 
 it('performs a model tool-call and result continuation with run-owned evidence', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
@@ -47,6 +51,44 @@ it('performs a model tool-call and result continuation with run-owned evidence',
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 
+it('handles parallel subject searches within the shared two-query limit and preserves explicit gaps', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'parallel', 'Has pricing changed for Acme, Beta, and Gamma?');
+  let requests = 0, searches: string[] = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    const request = JSON.parse(body); requests++;
+    const message = requests === 1
+      ? { role: 'assistant', content: null, tool_calls: ['Acme', 'Beta', 'Gamma'].map((subject, index) => ({ id: `call_${index}`, type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: `${subject} pricing`, subjects: [subject] }) } })) }
+      : (() => {
+        const evidence = request.messages.filter((item: any) => item.role === 'tool').flatMap((item: any) => {
+          const parsed = JSON.parse(item.content); return Array.isArray(parsed) ? parsed : [];
+        });
+        const id = evidence[0].id;
+        return { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Acme pricing remains uncertain.', kind: 'pricing', evidenceIds: [id] }], requestedSubjects: ['Acme', 'Beta', 'Gamma'], comparisons: ['Acme', 'Beta', 'Gamma'].map(subject => ({ subject, attribute: 'price', outcome: 'inconclusive', statement: `Current evidence is insufficient for ${subject}.`, baselineOrigin: 'unsupported', evidenceIds: evidence.map((item: any) => item.id).slice(0, 1) })), uncertainty: 'Gamma had no query budget.' }) };
+      })();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'tool_calls' : 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, search: async query => {
+      searches.push(query);
+      return [{ url: `https://example.com/${searches.length}`, title: query, excerpt: `${query} was observed.`, observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }];
+    } });
+    const result = await client([{ role: 'system', content: 'Authorized historical context. Sources attached to that answer at the time (0 observations): none.' }, { role: 'user', content: 'Has pricing changed for Acme, Beta, and Gamma?' }], () => {}, AbortSignal.timeout(5000));
+    expect(typeof result).toBe('object');
+    expect(searches).toEqual(['Acme pricing', 'Beta pricing']);
+    expect((await store.researchBudget('alice', runId)).requested_subjects).toEqual(['Acme', 'Beta', 'Gamma']);
+    expect((await store.researchBudget('alice', runId)).search_queries).toBe(2);
+    expect((await store.researchBudget('alice', runId)).model_calls).toBe(2);
+    expect(typeof result === 'object' && result.comparisons?.map(item => item.subject)).toEqual(['Acme', 'Beta', 'Gamma']);
+    expect(requests).toBe(2);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
 it('rejects a final comparison that omits a subject captured in the search plan', async () => {
   const db = new PGlite(); const store = new Store(db); await store.initialize();
   const conversation = await store.createConversation('alice');
@@ -68,6 +110,35 @@ it('rejects a final comparison that omits a subject captured in the search plan'
     const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: 'test', store, owner: 'alice', runId, search: async () => [{ url: 'https://example.com/', title: 'Pricing', excerpt: 'Acme pricing details.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
     await expect(client([{ role: 'system', content: 'Authorized historical context. Acme and Northstar were discussed.' }, { role: 'user', content: 'Has pricing changed for Acme and Northstar?' }], () => {}, AbortSignal.timeout(5000))).rejects.toThrow('Every requested comparison subject');
     expect((await store.researchBudget('alice', runId)).requested_subjects).toEqual(['Acme', 'Northstar']);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
+it('does not infer an earlier answer was wrong when it has no stored source support', async () => {
+  const db = new PGlite(); const store = new Store(db); await store.initialize();
+  const conversation = await store.createConversation('alice');
+  const runId = await store.admit('alice', conversation, 'unsupported-baseline', 'Has Acme pricing changed since earlier?');
+  let requests = 0;
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const part of req) body += part;
+    const request = JSON.parse(body); requests++;
+    const source = JSON.parse(request.messages.find((item: any) => item.role === 'tool')?.content || '[]')[0];
+    const message = requests === 1
+      ? { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'web_search', arguments: '{"query":"Acme pricing","subjects":["Acme"]}' } }] }
+      : { role: 'assistant', content: JSON.stringify({ claims: [{ claim: 'Current Acme pricing is USD 20 monthly.', kind: 'pricing', evidenceIds: [source.id] }], requestedSubjects: ['Acme'], comparisons: [{ subject: 'Acme', attribute: 'price', outcome: 'supported_change', statement: 'The original answer is not correct based on current evidence.', baselineOrigin: 'unsupported', evidenceIds: [source.id] }], uncertainty: 'The original answer is not correct based on current evidence.' }) };
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: 'test', object: 'chat.completion', created: 1, model: 'chat-main-v1', choices: [{ index: 0, message, finish_reason: requests === 1 ? 'tool_calls' : 'stop' }] }));
+  });
+  server.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+    const client = researchClient({ baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: 'test', model: 'chat-main-v1', searchKey: '', store, owner: 'alice', runId, search: async () => [{ url: 'https://example.com/acme', title: 'Acme pricing', excerpt: 'Current plan is USD 20 monthly.', observedAt: '2026-01-01T00:00:00Z', provider: 'tavily', representation: 'search_snippet' }] });
+    const result = await client([{ role: 'system', content: 'Authorized historical context. No source observations were attached.' }, { role: 'user', content: 'Has Acme pricing changed since earlier?' }], () => {}, AbortSignal.timeout(5000));
+    expect(typeof result).toBe('object');
+    if (typeof result === 'string') throw new Error('Expected a qualified comparison');
+    expect(result.comparisons?.[0].outcome).toBe('historical_support_missing');
+    expect(result.comparisons?.[0].statement).toContain('cannot establish whether the earlier answer was accurate');
+    expect(result.content).not.toContain('The original answer is not correct');
+    expect(result.content).toContain('its accuracy or change over time cannot be established');
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
 
