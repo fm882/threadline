@@ -1,8 +1,8 @@
 # Time-Aware Research Agent — detailed architecture
 
-> **Status:** implemented local-first application and architecture record. The Node/TypeScript chat UI/API, bounded research and citations, durable history/recall, continuation, and synthetic local evaluation are implemented. The Phase 10 fallback mechanism is implemented but disabled until the exact fast route passes live verification; paid Phase 12 quality/cost gates remain open. See the checked plan for exact status. The 100-client load run is synthetic, not hosted capacity. Cloud deployment, production identity, hosting selection, and multi-replica operation are deferred.
+> **Status:** implemented local-first application and architecture record. The Node/TypeScript chat UI/API, bounded research and citations, durable history/recall, continuation, and local synthetic evaluation are implemented. Token Harbor main chat and the Nova Micro fast fallback have passed route checks; three live research scenarios have completed with documented evidence and scope limits. Provider billing is unreconciled. The 100-client load run is synthetic, not hosted capacity. Cloud deployment, production identity, hosting selection, and multi-replica operation are deferred.
 >
-> **Decision:** Node/TypeScript + Hono + LangGraph + LangChain + LangSmith. All chat, embedding, and reranking inference initially runs on AWS Bedrock through a local LiteLLM gateway (a remote gateway remains an optional future connection mode). The application uses OpenAI-compatible chat/embedding clients; reranking has a separate gateway contract.
+> **Decision:** Node/TypeScript + Hono + LangGraph + LangChain + LangSmith. Main chat currently uses Token Harbor's OpenAI-compatible `deepseek-v4.1-flash:free` route through local LiteLLM; Nova Micro fallback, Titan embeddings, and Cohere reranking use AWS Bedrock. The application uses OpenAI-compatible chat/embedding clients; reranking has a separate gateway contract.
 >
 > This is the detailed engineering document. [DESIGN.md](DESIGN.md) is the concise, one-page summary of implemented behavior, local measurements, tradeoffs, and future work.
 
@@ -16,7 +16,7 @@
 6. [HTTP, SSE, and browser behavior](#6-http-sse-and-browser-behavior)
 7. [Admission, ordering, and execution](#7-admission-ordering-and-execution)
 8. [LangGraph workflow](#8-langgraph-workflow)
-9. [LiteLLM and Bedrock inference](#9-litellm-and-bedrock-inference)
+9. [LiteLLM inference routing](#9-litellm-inference-routing)
 10. [Temporal history and architecture C](#10-temporal-history-and-architecture-c)
 11. [Embedding and indexing pipeline](#11-embedding-and-indexing-pipeline)
 12. [Hybrid retrieval and reranking](#12-hybrid-retrieval-and-reranking)
@@ -128,7 +128,8 @@ flowchart TB
     INDEX --> EMBED
     CLIENT --> GATEWAY[LiteLLM gateway]
     EMBED --> GATEWAY
-    GATEWAY --> BEDROCK[AWS Bedrock]
+    GATEWAY --> TOKENHARBOR[Token Harbor main chat]
+    GATEWAY --> BEDROCK[AWS Bedrock fallback, embeddings, reranking]
     GATEWAY -. Future configured routes .-> OTHER[Other model providers]
     SEARCH --> WEB[Web-search provider]
     GRAPH -. Traces and evaluations .-> SMITH[LangSmith]
@@ -160,8 +161,8 @@ A graph checkpoint must not become a second unbounded transcript archive. A cont
 | Validation | Zod | Validate configuration, external input, tools, gateway responses, structured outputs |
 | Workflow | LangGraph JS `StateGraph` | Checkpointing, branching, execution state and streaming [D1] |
 | Inference client | LangChain `ChatOpenAI` and `OpenAIEmbeddings` configured for LiteLLM | Reuse compatible clients; package name does not imply OpenAI hosts inference [D2] |
-| Inference gateway | Local LiteLLM executable, pinned tested version; optional future container | Bedrock translation, credentials, deployment routing and bounded retries [D3] |
-| Initial backend | AWS Bedrock for all model roles | Model access and regional availability verified with small local inference calls |
+| Inference gateway | Local LiteLLM executable, pinned tested version; optional future container | Provider translation, credentials, deployment routing and bounded retries [D3] |
+| Initial backend | Token Harbor for main chat; AWS Bedrock for fallback, embeddings, and reranking | Main/fallback chat routes and embedding behavior were exercised; reranking has a documented provider access failure |
 | Agent telemetry | LangSmith | Trace inspection, datasets and experiments [D4] |
 | Operations | OpenTelemetry + Pino structured logs | HTTP/database/gateway timing, resource metrics and correlated errors |
 | Local application data | File-backed PGlite, required extensions loaded | Simple startup with PostgreSQL-oriented schema; verify extension support in pinned version [D5] |
@@ -458,7 +459,7 @@ Choose a graph thread per logical run rather than accumulating the whole convers
 
 Do not automatically re-run finalization if the application DB already marks the run terminal. Reconcile database status before graph resume. Graph migrations either support the recorded version or fail the run with an explicit restart path.
 
-## 9. LiteLLM and Bedrock inference
+## 9. LiteLLM inference routing
 
 ### 9.1 Boundary
 
@@ -470,28 +471,29 @@ flowchart LR
     CHAT -->|Chat Completions| GATEWAY[LiteLLM]
     EMB -->|Embeddings| GATEWAY
     RERANK -->|Rerank API| GATEWAY
-    GATEWAY -->|AWS authenticated calls| BEDROCK[AWS Bedrock]
+    GATEWAY -->|OpenAI-compatible chat| TOKENHARBOR[Token Harbor]
+    GATEWAY -->|Fallback, embeddings, reranking| BEDROCK[AWS Bedrock]
 ```
 
 - Chat uses the gateway's OpenAI-compatible Chat Completions endpoint.
 - Embeddings use its OpenAI-compatible embeddings endpoint.
 - Reranking uses the separate Cohere-style rerank endpoint exposed by LiteLLM [D8]. Do not claim OpenAI standardizes this endpoint.
-- The Node process does not contain Bedrock-native chat/embedding adapters and does not need AWS inference credentials.
-- The gateway owns Bedrock request translation and authentication. Provider-native details are permitted only in gateway deployment configuration.
+- The Node process uses gateway-compatible chat and embedding clients and does not contain provider-native inference adapters.
+- The gateway owns provider request translation and credentials. Token Harbor credentials and AWS credentials remain at the gateway boundary.
 - Use LangChain's existing clients; keep only a thin configuration/capability layer and the small rerank HTTP adapter. OpenAI-compatible endpoints do not guarantee identical optional fields.
 
 ### 9.2 Logical roles and model choices
 
-| Role | Application alias | Initial Bedrock target | Selection status |
+| Role | Application alias | Configured target | Selection status |
 | --- | --- | --- | --- |
-| Main research | `chat-main-v1` | `us.amazon.nova-pro-v1:0` through LiteLLM | Local completion/tool-call/basic JSON-schema smoke checks passed; research quality still unevaluated |
-| Fast work | `chat-fast-v1` | `us.amazon.nova-micro-v1:0` through LiteLLM | Local streaming smoke check passed; routing/extraction quality still unevaluated |
-| History embedding | `history-embedding-v1` | Titan Text Embeddings V2, `amazon.titan-embed-text-v2:0`, 1024 float dimensions, normalization enabled | Concrete baseline; validate gateway translation and retrieval quality |
-| Reranking | `history-rerank-v1` | Bedrock `cohere.rerank-v3-5:0` in `us-east-1` | Basic ranking smoke check passed through gateway; no direct Cohere service call |
+| Main research | `chat-main-v1` | Token Harbor `deepseek-v4.1-flash:free` through LiteLLM | Main completion, tool-call, structured-output, and three assignment scenarios exercised; quality limits in [the live evaluation report](docs/PHASE12_LIVE_EVALUATION.md) |
+| Fast work | `chat-fast-v1` | `us.amazon.nova-micro-v1:0` through LiteLLM | Streaming, two-call research contract, and application fallback path passed live compatibility checks |
+| History embedding | `history-embedding-v1` | Titan Text Embeddings V2, `amazon.titan-embed-text-v2:0`, 1024 float dimensions, normalization enabled | Gateway vectors validated; retrieval quality evidence is reported separately |
+| Reranking | `history-rerank-v1` | Bedrock `cohere.rerank-v3-5:0` in `us-east-1` | Earlier smoke check passed; current account request was denied with `INVALID_PAYMENT_INSTRUMENT`, with fused-order fallback retained |
 
 Titan V2 supports the selected dimension/normalization options [D9]. This is an explicit baseline, not a claim that it wins multilingual or task-specific retrieval evaluations. Pin the resolved model and gateway configuration revision. The local routes above were invoked through the gateway in `us-east-1`; see [the verification report](docs/INFERENCE_VERIFICATION.md). Claude Sonnet 4.6 and Haiku 4.5 candidate routes failed with `INVALID_PAYMENT_INSTRUMENT` in the tested account. The Nova defaults are a verified development baseline, not a claim they are the best models for this task. No billing/subscription changes were made. Access can differ by profile, region and account. The `us.` profiles may route across their configured US regions.
 
-All production model roles, including summary/extraction/repair calls, route to Bedrock initially. Alternative providers are enabled only through an intentional gateway configuration change and capability validation.
+The checked-in local config routes main chat to Token Harbor and other listed roles to their configured Bedrock routes. Production model roles and deployment routing remain future configuration choices; do not infer deployment readiness from local provider checks.
 
 ### 9.3 Capabilities and bindings
 
@@ -556,8 +558,9 @@ The executable local config is [infra/litellm/config.yaml](infra/litellm/config.
 model_list:
   - model_name: chat-main-v1
     litellm_params:
-      model: os.environ/BEDROCK_MAIN_ROUTE
-      aws_region_name: os.environ/AWS_REGION_NAME
+      model: openai/deepseek-v4.1-flash:free
+      api_base: https://tokenharbor.ai/v1
+      api_key: os.environ/TOKENHARBOR_API_KEY
   - model_name: chat-fast-v1
     litellm_params:
       model: os.environ/BEDROCK_FAST_ROUTE
@@ -1257,7 +1260,7 @@ The local chat application starts with `npm install && npm run dev` when the doc
 
 Run `node scripts/start-gateway.mjs` with an existing authorized AWS CLI profile selected in the environment or ignored `.env`. It binds LiteLLM to `127.0.0.1`, generates a local key in `.data/litellm.key`, and uses existing AWS credentials without copying them into the repository. In another terminal, `node scripts/verify-inference.mjs` performs bounded, billable checks on synthetic text. No hosting, managed database, IAM, model subscription or billing changes are made.
 
-PGlite and SQLite checkpoint initialization belong to the upcoming application implementation. Local LiteLLM itself requires its third-party executable/dependencies, already present in this environment; see the README for setup elsewhere. This is separate from the Node backend requirement. A future remote gateway can remove this local prerequisite, but provisioning one is not part of the current work.
+PGlite and SQLite checkpoint initialization are implemented in the local application. Local LiteLLM requires its third-party executable/dependencies; see the README for setup. This is separate from the Node backend requirement. A future remote gateway can remove this local prerequisite, but provisioning one is not part of the current work.
 
 Without live-service credentials, the eventual UI should show an explicit setup state. Mock/fixture mode must never masquerade as live research. Do not claim a fully working chat application based on inference-only smoke tests.
 
@@ -1286,7 +1289,7 @@ The gateway's own database/cache requirements depend on enabled LiteLLM features
 
 ### 21.3 Application environment contract
 
-The tracked [.env.example](.env.example) covers the runnable local gateway helpers. The fuller application settings below remain a planned contract until the chat app exists:
+The tracked [.env.example](.env.example) covers the runnable local gateway helpers. The application settings below describe the current runtime contract and optional future deployment settings:
 
 ```dotenv
 NODE_ENV=development

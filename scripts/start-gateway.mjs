@@ -9,7 +9,6 @@ env.TOKENHARBOR_API_KEY ||= env.token_harbor_api;
 if (!env.TOKENHARBOR_API_KEY) throw new Error('Set TOKENHARBOR_API_KEY in .env to route the main chat alias through Token Harbor.');
 env.AWS_REGION_NAME ||= env.AWS_REGION || env.AWS_DEFAULT_REGION || 'us-east-1';
 env.AWS_DEFAULT_REGION ||= env.AWS_REGION_NAME;
-env.BEDROCK_MAIN_ROUTE ||= 'bedrock/converse/us.amazon.nova-pro-v1:0';
 env.BEDROCK_FAST_ROUTE ||= 'bedrock/converse/us.amazon.nova-micro-v1:0';
 env.BEDROCK_EMBEDDING_ROUTE ||= 'bedrock/amazon.titan-embed-text-v2:0';
 env.BEDROCK_RERANK_ROUTE ||= `bedrock/arn:aws:bedrock:${env.AWS_REGION_NAME}::foundation-model/cohere.rerank-v3-5:0`;
@@ -32,7 +31,7 @@ if (!env.LITELLM_MASTER_KEY.startsWith('sk-') || env.LITELLM_MASTER_KEY.length <
 }
 
 console.log(`Starting loopback-only LiteLLM on http://127.0.0.1:${port}; region ${env.AWS_REGION_NAME}.`);
-console.log('Uses existing AWS credentials. Keys are never printed. Ctrl-C stops the gateway.');
+console.log('Uses configured Token Harbor and AWS credentials. Keys are never printed. Ctrl-C stops the gateway.');
 const child = spawn(env.LITELLM_BIN || 'litellm', [
   '--config', join(root, 'infra/litellm/config.yaml'),
   '--host', '127.0.0.1', '--port', String(port),
