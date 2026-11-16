@@ -255,11 +255,37 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
     }
     if (continuation.invalid_tool_calls?.length || typeof continuation.content !== 'string' || continuation.content.length > 16000) throw new Error('Invalid research response');
     observations = [...observationsByQuery.values()].flat();
-    const answer = researchSchema.parse(parsePromptedJson(continuation.content));
+    const prompted = parsePromptedJson(continuation.content);
+    if (prompted && typeof prompted === 'object' && !Array.isArray(prompted)) {
+      const record = prompted as Record<string, unknown>;
+      if (Array.isArray(record.comparisons)) {
+        record.comparisons = record.comparisons.map(value => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+          const comparison = value as Record<string, unknown>;
+          if (typeof comparison.subject === 'string' && plannedSubjects.length) {
+            const alias = comparison.subject.trim().toLocaleLowerCase();
+            const matches = plannedSubjects.filter(subject => {
+              const canonical = subject.trim().toLocaleLowerCase();
+              return canonical === alias || canonical.startsWith(`${alias} `) || canonical.includes(` ${alias} `);
+            });
+            if (matches.length === 1) comparison.subject = matches[0];
+          }
+          for (const key of ['priorDimensions', 'currentDimensions']) {
+            const dimensions = comparison[key];
+            if (dimensions && typeof dimensions === 'object' && !Array.isArray(dimensions)) {
+              const value = (dimensions as Record<string, unknown>).seats;
+              if (value !== undefined && (!Number.isInteger(value) || Number(value) < 1)) delete (dimensions as Record<string, unknown>).seats;
+            }
+          }
+          return comparison;
+        });
+      }
+    }
+    const answer = researchSchema.parse(prompted);
     answer.claims = answer.claims.filter(claim => claim.evidenceIds.length > 0);
     if (!answer.claims.length && !answer.comparisons.length) throw new Error('Research response contained no evidence-backed claims or qualified comparisons');
     if ((hasHistoricalContext && isHistoricalComparisonRequest(currentQuestion)) || userReportedQuote) {
-      const requested = [...new Map([...plannedSubjects, ...answer.requestedSubjects].map(subject => [subject.trim().toLocaleLowerCase(), subject])).values()];
+      const requested = plannedSubjects.length ? plannedSubjects : answer.requestedSubjects;
       validateSubjectCoverage(requested, answer.comparisons);
     }
     if ([...answer.claims.map(claim => claim.claim), ...answer.comparisons.map(comparison => comparison.statement), answer.uncertainty].some(text => /\[source:/i.test(text))) throw new Error('Citation markup must be generated from validated evidence');
