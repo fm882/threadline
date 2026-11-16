@@ -25,7 +25,7 @@ it('uses the OpenAI-compatible gateway streaming contract with the configured mo
     expect(request.messages[0].role).toBe('system');
     expect(request.messages[0].content).toContain('Web search is unavailable');
     expect(request.stream).toBe(true);
-    expect(request.max_tokens).toBe(1024);
+    expect(request.max_tokens).toBe(2048);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 
