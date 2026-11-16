@@ -80,7 +80,7 @@ if (liveAssignmentMode) {
       method: req.method || 'POST',
       headers: { authorization: `Bearer ${process.env.INFERENCE_API_KEY || upstreamKey}`, 'content-type': 'application/json' },
       body: raw || undefined,
-      signal: AbortSignal.timeout(65_000),
+      signal: AbortSignal.timeout(120_000),
     });
     const body = await response.text();
     const record = { at: new Date().toISOString(), model, status: response.status };
@@ -218,7 +218,7 @@ try {
   console.log('Deadline limitation and explicit linked continuation survived the browser flow.');
 
   await stop(api); api = startApi(scenariosDir, true, liveAssignmentMode); await ready(); await page.goto('http://127.0.0.1:5173');
-  const assignmentTimeout = liveAssignmentMode ? 70_000 : 15_000;
+  const assignmentTimeout = liveAssignmentMode ? 125_000 : 15_000;
   await page.getByRole('button', { name: '+ New conversation' }).click();
   await page.getByLabel('Your message').fill('On Monday we shortlisted 5 CRM tools for a 20-person sales team. Has any of them changed pricing or shipped something big since?');
   const crmModelRequestStart = liveModelUsage.length;

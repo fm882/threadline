@@ -130,7 +130,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
   const modelFor = (profile: ModelProfile) => {
     let model = models.get(profile.model);
     if (!model) {
-      model = new ChatOpenAI({ model: profile.model, apiKey: config.apiKey, configuration: { baseURL: config.baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: profile.maxOutputTokens, maxRetries: 0, timeout: 65_000 });
+      model = new ChatOpenAI({ model: profile.model, apiKey: config.apiKey, configuration: { baseURL: config.baseURL, fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }) }, maxTokens: profile.maxOutputTokens, maxRetries: 0, timeout: 120_000 });
       models.set(profile.model, model);
     }
     return model;
