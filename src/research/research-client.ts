@@ -21,7 +21,7 @@ const comparisonSchema = z.object({
   priorDimensions: z.object({ plan: z.string().optional(), currency: z.string().optional(), billingPeriod: z.string().optional(), seats: z.number().int().positive().optional(), region: z.string().optional(), taxBasis: z.string().optional() }).strict().optional(),
   currentDimensions: z.object({ plan: z.string().optional(), currency: z.string().optional(), billingPeriod: z.string().optional(), seats: z.number().int().positive().optional(), region: z.string().optional(), taxBasis: z.string().optional() }).strict().optional(),
 }).strict();
-const researchSchema = z.object({ claims: z.array(z.object({ claim: z.string().trim().min(1).max(4000), kind: z.enum(['pricing', 'other']), evidenceIds: z.array(z.string().uuid()).max(5) }).strict()).max(10), requestedSubjects: z.array(z.string().trim().min(1).max(200)).max(10).default([]), comparisons: z.array(comparisonSchema).max(10).default([]), uncertainty: z.string().max(2000) }).strict();
+export const researchSchema = z.object({ claims: z.array(z.object({ claim: z.string().trim().min(1).max(4000), kind: z.enum(['pricing', 'other']), evidenceIds: z.array(z.string().uuid()).max(5) }).strict()).max(10), requestedSubjects: z.array(z.string().trim().min(1).max(200)).max(10).default([]), comparisons: z.array(comparisonSchema).max(10).default([]), uncertainty: z.string().max(2000) }).strict();
 export type ResearchComparison = z.infer<typeof comparisonSchema>;
 
 export function parsePromptedJson(content: string): unknown {
@@ -246,7 +246,7 @@ export function researchClient(config: { baseURL: string; apiKey: string; model:
       if (followupRounds >= 2) throw new RunBudgetExceeded('Research used its bounded follow-up rounds before the model returned a final answer');
       if (continuation.invalid_tool_calls?.length) throw new Error('Invalid tool call');
       const additionalPlans = parseCalls(continuation.tool_calls);
-      const authorizedSubjectText = `${currentQuestion}\n${historicalContext}`.toLocaleLowerCase();
+      const authorizedSubjectText = currentQuestion.toLocaleLowerCase();
       requiredSubjects = [...new Set([...requiredSubjects, ...additionalPlans.flatMap(plan => plan.subjects).filter(subject => authorizedSubjectText.includes(subject.trim().toLocaleLowerCase()))])];
       const additionalResults = await executePlans(additionalPlans);
       observations = [...observationsByQuery.values()].flat();
