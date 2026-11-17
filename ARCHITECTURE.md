@@ -489,7 +489,7 @@ flowchart LR
 | Main research | `chat-main-v1` | Token Harbor `deepseek-v4.1-flash:free` through LiteLLM | Main completion, tool-call, structured-output, and three assignment scenarios exercised; quality limits in [the live evaluation report](docs/PHASE12_LIVE_EVALUATION.md) |
 | Fast work | `chat-fast-v1` | `us.amazon.nova-micro-v1:0` through LiteLLM | Streaming, two-call research contract, and application fallback path passed live compatibility checks |
 | History embedding | `history-embedding-v1` | Titan Text Embeddings V2, `amazon.titan-embed-text-v2:0`, 1024 float dimensions, normalization enabled | Gateway vectors validated; retrieval quality evidence is reported separately |
-| Reranking | `history-rerank-v1` | Bedrock `cohere.rerank-v3-5:0` in `us-east-1` | Earlier smoke check passed; current account request was denied with `INVALID_PAYMENT_INSTRUMENT`, with fused-order fallback retained |
+| Reranking | `history-rerank-v1` | Bedrock Cohere Rerank 3.5 in `BEDROCK_RERANK_REGION` | Region is configured independently from chat/embedding; use a region enabled for the AWS account. Fused-order fallback remains available on provider failure. |
 
 Titan V2 supports the selected dimension/normalization options [D9]. This is an explicit baseline, not a claim that it wins multilingual or task-specific retrieval evaluations. Pin the resolved model and gateway configuration revision. The local routes above were invoked through the gateway in `us-east-1`; see [the verification report](docs/INFERENCE_VERIFICATION.md). Claude Sonnet 4.6 and Haiku 4.5 candidate routes failed with `INVALID_PAYMENT_INSTRUMENT` in the tested account. The Nova defaults are a verified development baseline, not a claim they are the best models for this task. No billing/subscription changes were made. Access can differ by profile, region and account. The `us.` profiles may route across their configured US regions.
 
@@ -572,7 +572,7 @@ model_list:
   - model_name: history-rerank-v1
     litellm_params:
       model: os.environ/BEDROCK_RERANK_ROUTE
-      aws_region_name: os.environ/AWS_REGION_NAME
+      aws_region_name: os.environ/BEDROCK_RERANK_REGION
 ```
 
 Basic local HTTP compatibility was checked with LiteLLM 1.103.2. Further tests must validate full SDK integration, capability metadata, access controls, failure semantics and evaluated quality [D3]. Keep provider-integration settings out of user prompts.

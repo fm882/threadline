@@ -18,7 +18,7 @@ model_list:
   - model_name: history-rerank-v1
     litellm_params:
       model: os.environ/BEDROCK_RERANK_ROUTE
-      aws_region_name: os.environ/AWS_REGION_NAME
+      aws_region_name: os.environ/BEDROCK_RERANK_REGION
 
 general_settings:
   # Without a gateway DB, LiteLLM authenticates using its master key.

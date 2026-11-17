@@ -145,6 +145,8 @@ It listens on `127.0.0.1:4000` and creates `.data/litellm.key`. Keep it loopback
 
 ## Verify
 
+See [TEST.md](TEST.md) for the assignment smoke-test walkthrough, three evaluation conversations, and live-provider checks.
+
 ```bash
 npm test
 npm run typecheck

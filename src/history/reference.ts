@@ -18,7 +18,10 @@ export function interpretHistoricalRequest(input: string, recordedAt: Date, time
   const discussion = discussionClause ? interpretDateReference(discussionClause[1], recordedAt, timezone) : { status: 'not_recognized' as const };
   const comparison = comparisonClause ? interpretDateReference(comparisonClause[1], recordedAt, timezone) : { status: 'not_recognized' as const };
   const historyPattern = /\b(?:discussed|talked\s+about|ask(?:ed)?|said|mentioned|recommended|suggested|those\s+(?:five|ones|tools|products)|these\s+(?:five|ones|tools|products)|that\s+(?:shortlist|list|discussion)|the\s+list|same\s+(?:five|ones|tools|products)|any\s+of\s+them|what\s+about\s+those|what\s+was\s+the\s+shortlist|earlier|previous(?:ly)?|last\s+time)\b/i;
-  const shortlistFollowup = /\bshortlist(?:ed)?\b/i.test(input) && /\b(?:what|changed|since|them|those|same|earlier|previous)\b/i.test(input);
+  // Terms like "them" often occur in setup requests ("keep the shortlist so
+  // we can revisit them"). Require a clear follow-up cue when "shortlist" is
+  // the only historical signal; explicit anaphora remains covered above.
+  const shortlistFollowup = /\bshortlist(?:ed)?\b/i.test(input) && /\b(?:what|changed|since|same|earlier|previous)\b/i.test(input);
   const historySignal = historyPattern.test(input) || shortlistFollowup || (historyPattern.test(continuity) && /\b(?:they|them|those|these|that|same|it)\b/i.test(input));
   const anaphoric = /\b(?:they|them|those|these|that|same|it|one|ones)\b/i.test(input);
   const searchText = anaphoric ? `${input} ${continuity}` : input;

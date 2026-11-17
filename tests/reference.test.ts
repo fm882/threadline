@@ -14,6 +14,8 @@ it('interprets the discussion date independently from a comparison interval', ()
 it('detects historical references without treating an unrelated question as history search', () => {
   expect(interpretHistoricalRequest('What about those five?', now, 'UTC').needed).toBe(true);
   expect(interpretHistoricalRequest('We shortlisted five CRM tools for a 20-person sales team.', now, 'UTC').needed).toBe(false);
+  expect(interpretHistoricalRequest('I’m helping a 20-person sales team. Shortlist five CRM tools and explain the tradeoffs. Keep the shortlist and the criteria we used in this conversation so we can revisit them.', now, 'UTC').needed).toBe(false);
+  expect(interpretHistoricalRequest('Have any of them changed pricing since we made the shortlist?', now, 'UTC').needed).toBe(true);
   expect(interpretHistoricalRequest('What is the current population of Delhi?', now, 'UTC').needed).toBe(false);
 });
 

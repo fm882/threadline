@@ -47,7 +47,7 @@ export AWS_PROFILE=your-existing-profile
 
 The tracked LiteLLM config contains example routes for Token Harbor main chat, the Nova Micro fallback, Titan embeddings, and Bedrock Cohere reranking. The generic `.env.example` does not require these providers; configure only the credentials for routes you choose. Do not assume catalog visibility grants invocation permission for a provider model.
 
-The launcher reads `.env` using Node's built-in environment-file support. Shell environment overrides can be used for experiments without editing tracked configuration. `AWS_REGION_NAME` must match the selected Bedrock routes and rerank model ARN. Changing only the region does not make every route available there.
+The launcher reads `.env` using Node's built-in environment-file support. Shell environment overrides can be used for experiments without editing tracked configuration. `AWS_REGION_NAME` selects the fallback and embedding routes; `BEDROCK_RERANK_REGION` independently selects the Bedrock reranker region and must match the region in `BEDROCK_RERANK_ROUTE`. Use a region where the AWS account can invoke the selected reranker; rerank requests are regional and do not use cross-region inference profiles.
 
 ## 3. Start the local gateway
 

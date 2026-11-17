@@ -11,7 +11,8 @@ env.AWS_REGION_NAME ||= env.AWS_REGION || env.AWS_DEFAULT_REGION || 'us-east-1';
 env.AWS_DEFAULT_REGION ||= env.AWS_REGION_NAME;
 env.BEDROCK_FAST_ROUTE ||= 'bedrock/converse/us.amazon.nova-micro-v1:0';
 env.BEDROCK_EMBEDDING_ROUTE ||= 'bedrock/amazon.titan-embed-text-v2:0';
-env.BEDROCK_RERANK_ROUTE ||= `bedrock/arn:aws:bedrock:${env.AWS_REGION_NAME}::foundation-model/cohere.rerank-v3-5:0`;
+env.BEDROCK_RERANK_REGION ||= env.AWS_REGION_NAME;
+env.BEDROCK_RERANK_ROUTE ||= `bedrock/arn:aws:bedrock:${env.BEDROCK_RERANK_REGION}::foundation-model/cohere.rerank-v3-5:0`;
 
 const port = Number(env.LITELLM_PORT || 4000);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) {
